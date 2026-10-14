@@ -1,14 +1,22 @@
 [project]
-name = "my-project"
+name = "myapp"
 version = "0.1.0"
-description = "This is a test version"
+description = "Project mẫu được quản lý bằng uv"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "requests>=2.34.2",
+]
 
-[project.scripts]
-my-project = "my_project:main"
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.17.0",
+]
 
-[build-system]
-requires = ["uv_build>=0.12.13,<0.13.0"]
-build-backend = "uv_build"
+[tool.ruff]
+line-length = 88
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
