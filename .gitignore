@@ -1,0 +1,10 @@
+# Virtual environments
+.venv
+
+# Tool caches & coverage
+__pycache__/
+*.py[oc]
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.coverage
