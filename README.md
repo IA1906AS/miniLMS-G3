@@ -1,5 +1,7 @@
 # myapp
 
+![CI](https://github.com/bbo211/myapp/actions/workflows/ci.yml/badge.svg)
+
 Project Python quản lý bằng [uv](https://docs.astral.sh/uv/).
 
 ```bash
