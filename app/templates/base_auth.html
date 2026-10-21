@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <meta name="theme-color" content="#0b0e17">
+    <title>{% block title %}MiniLMS{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/auth.css', v='3') }}">
+    <script src="{{ url_for('static', filename='js/auth.js', v='3') }}" defer></script>
+  </head>
+  <body class="auth-body">
+    <main class="auth-shell">
+      <aside class="brand-panel" aria-label="Giới thiệu MiniLMS">
+        <a class="brand" href="{{ url_for('web.home') }}" aria-label="MiniLMS - Trang chủ">
+          <span class="brand-symbol" aria-hidden="true">
+            <svg viewBox="0 0 40 40" focusable="false">
+              <path d="M7 29V11l13 12L33 9v20" />
+              <path d="M7 29h26" />
+            </svg>
+          </span>
+          <span>Mini<span>LMS</span></span>
+        </a>
+
+        <div class="brand-copy">
+          <p class="overline">HỌC TẬP · ĐẦU TƯ · PHÁT TRIỂN</p>
+          <h2>{% block promo_title %}Kiến thức là khoản đầu tư tốt nhất.{% endblock %}</h2>
+          <p>{% block promo_copy %}Mở rộng kỹ năng, theo dõi tiến độ và xây dựng tương lai của bạn — từng bài học một.{% endblock %}</p>
+        </div>
+
+        <div class="market-illustration" aria-hidden="true">
+          <div class="chart-orbit orbit-a"></div>
+          <div class="chart-orbit orbit-b"></div>
+          <div class="chart-glow"></div>
+          <svg class="growth-chart" viewBox="0 0 460 270" fill="none" focusable="false">
+            <defs>
+              <linearGradient id="chartFill" x1="40" y1="130" x2="420" y2="130" gradientUnits="userSpaceOnUse">
+                <stop stop-color="#7968F5" stop-opacity=".24"/>
+                <stop offset="1" stop-color="#00C2FF" stop-opacity=".02"/>
+              </linearGradient>
+              <linearGradient id="chartStroke" x1="42" y1="197" x2="414" y2="45" gradientUnits="userSpaceOnUse">
+                <stop stop-color="#7968F5"/>
+                <stop offset="1" stop-color="#5CE4DB"/>
+              </linearGradient>
+            </defs>
+            <path class="chart-grid" d="M32 52H430M32 102H430M32 152H430M32 202H430M75 28V228M155 28V228M235 28V228M315 28V228M395 28V228" />
+            <path class="chart-fill" d="M42 197L98 176L143 187L195 131L246 149L299 92L348 108L414 45V228H42V197Z" />
+            <path class="chart-line" d="M42 197L98 176L143 187L195 131L246 149L299 92L348 108L414 45" />
+            <circle class="chart-point" cx="414" cy="45" r="5" />
+            <g class="candles">
+              <path d="M89 143V188M82 154H96V177H82zM151 126V181M144 139H158V164H144zM213 106V160M206 119H220V144H206zM275 78V127M268 90H282V113H268zM337 64V112M330 73H344V99H330zM390 32V78M383 43H397V65H383z" />
+            </g>
+          </svg>
+          <div class="floating-stat stat-growth">
+            <span class="stat-icon" aria-hidden="true">↗</span>
+            <span><strong>+24,8%</strong><small>Tiến độ học tập</small></span>
+          </div>
+          <div class="floating-stat stat-course">
+            <span class="course-avatar" aria-hidden="true">M</span>
+            <span><strong>Khóa học mới</strong><small>Sẵn sàng khám phá</small></span>
+            <span class="stat-live" aria-hidden="true"></span>
+          </div>
+        </div>
+
+        <div class="brand-footer">
+          <span>HỌC HÔM NAY · DẪN ĐẦU NGÀY MAI</span>
+          <span class="footer-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+        </div>
+      </aside>
+
+      <section class="form-panel" aria-label="Xác thực tài khoản">
+        <div class="form-panel-top">
+          <a class="brand brand-mobile" href="{{ url_for('web.home') }}">
+            <span class="brand-symbol" aria-hidden="true">
+              <svg viewBox="0 0 40 40" focusable="false">
+                <path d="M7 29V11l13 12L33 9v20M7 29h26" />
+              </svg>
+            </span>
+            <span>Mini<span>LMS</span></span>
+          </a>
+          <div class="auth-switch">
+            <span>{% block switch_prompt %}Chưa có tài khoản?{% endblock %}</span>
+            <a href="{% block switch_url %}{{ url_for('web.register_form') }}{% endblock %}">{% block switch_label %}Đăng ký{% endblock %}</a>
+          </div>
+        </div>
+
+        <div class="form-wrap">
+          {% for category, message in get_flashed_messages(with_categories=True) %}
+            <div class="notice {{ 'notice-error' if category == 'error' else 'notice-success' }}" role="{{ 'alert' if category == 'error' else 'status' }}">{{ message }}</div>
+          {% endfor %}
+          {% block auth_content %}{% endblock %}
+        </div>
+
+        <p class="form-legal">Bằng việc tiếp tục, bạn đồng ý với <a href="#" aria-disabled="true">Điều khoản sử dụng</a> và <a href="#" aria-disabled="true">Chính sách bảo mật</a> của MiniLMS.</p>
+      </section>
+    </main>
+  </body>
+</html>

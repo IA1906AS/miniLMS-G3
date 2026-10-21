@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}LMS{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  </head>
+  <body class="{% block body_class %}site-shell{% endblock %}">
+    {% block site_header %}
+      <header class="topbar">
+        <a class="brand" href="{{ url_for('web.home') }}">LMS</a>
+        <nav>
+          {% if session.get('user_id') %}
+            <a href="{{ url_for('web.account') }}">Tài khoản</a>
+            <form class="inline-form" method="post" action="{{ url_for('web.logout') }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button class="nav-button" type="submit">Đăng xuất</button>
+            </form>
+          {% else %}
+            <a href="{{ url_for('web.login_form') }}">Đăng nhập</a>
+            <a href="{{ url_for('web.register_form') }}">Đăng ký</a>
+          {% endif %}
+        </nav>
+      </header>
+    {% endblock %}
+    <main class="{% block main_class %}page{% endblock %}">
+      {% for message in get_flashed_messages() %}
+        <p class="notice" role="status">{{ message }}</p>
+      {% endfor %}
+      {% block content %}{% endblock %}
+    </main>
+  </body>
+</html>
