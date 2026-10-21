@@ -1,0 +1,65 @@
+{% extends "base_auth.html" %}
+{% block title %}Đăng nhập | MiniLMS{% endblock %}
+{% block switch_prompt %}Chưa có tài khoản?{% endblock %}
+{% block switch_url %}{{ url_for('web.register_form') }}{% endblock %}
+{% block switch_label %}Đăng ký{% endblock %}
+{% block auth_content %}
+  <div class="form-heading">
+    <p class="form-eyebrow">CHÀO MỪNG BẠN TRỞ LẠI</p>
+    <h1>Đăng nhập</h1>
+    <p>Đăng nhập để tiếp tục hành trình học tập.</p>
+  </div>
+  {% if request.args.get('registered') == '1' %}
+    <div class="notice notice-success" role="status">Tạo tài khoản thành công. Hãy đăng nhập để tiếp tục.</div>
+  {% endif %}
+  {% if request.args.get('password_reset') == '1' %}
+    <div class="notice notice-success" role="status">Mật khẩu đã được cập nhật. Hãy đăng nhập bằng mật khẩu mới.</div>
+  {% endif %}
+  {% if error %}<div class="notice notice-error" role="alert">{{ error }}</div>{% endif %}
+  <div class="notice notice-error form-error" role="alert" aria-live="assertive" hidden></div>
+  <form class="auth-form" data-auth-form="login" method="post" action="{{ url_for('web.login_form') }}" novalidate>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="field">
+      <label for="email">Email</label>
+      <div class="input-shell">
+        <svg class="field-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5.5" width="17" height="13" rx="2"/><path d="m4 7 8 6 8-6"/></svg>
+        <input id="email" name="email" type="email" placeholder="ten@email.com" autocomplete="email" required aria-describedby="email-error">
+      </div>
+      <small class="field-error" id="email-error" aria-live="polite"></small>
+    </div>
+    <div class="field">
+      <div class="field-label-row">
+        <label for="password">Mật khẩu</label>
+        <a href="{{ url_for('web.forgot_password_form') }}">Quên mật khẩu?</a>
+      </div>
+      <div class="input-shell">
+        <svg class="field-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="10" width="15" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 4v2"/></svg>
+        <input id="password" name="password" type="password" placeholder="Nhập mật khẩu" autocomplete="current-password" required aria-describedby="password-error">
+        <button class="password-toggle" type="button" data-password-toggle="password" aria-label="Hiện mật khẩu" aria-pressed="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.4-6 9.5-6 9.5 6 9.5 6-3.4 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg>
+        </button>
+      </div>
+      <small class="field-error" id="password-error" aria-live="polite"></small>
+    </div>
+    <div class="form-options">
+      <label class="check-label"><input type="checkbox" name="remember"><span class="custom-check" aria-hidden="true"></span><span>Ghi nhớ đăng nhập</span></label>
+    </div>
+    <button class="primary-button" type="submit">
+      <span class="button-label">Đăng nhập</span>
+      <span class="button-spinner" aria-hidden="true"></span>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6"/></svg>
+    </button>
+  </form>
+  <div class="separator"><span>hoặc tiếp tục với</span></div>
+  <div class="social-row">
+    <a class="social-button social-google" href="{{ url_for('web.oauth_start', provider='google') }}" aria-describedby="social-note">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M21.35 12.23c0-.71-.06-1.39-.18-2.05H12v3.88h5.24a4.48 4.48 0 0 1-1.95 2.94v2.4h3.16c1.85-1.7 2.9-4.2 2.9-7.17Z"/><path fill="#34A853" d="M12 21.75c2.65 0 4.87-.88 6.49-2.38l-3.16-2.4c-.88.59-2 .94-3.33.94-2.56 0-4.73-1.73-5.5-4.06H3.24v2.48A9.75 9.75 0 0 0 12 21.75Z"/><path fill="#FBBC05" d="M6.5 13.85a5.86 5.86 0 0 1 0-3.7V7.67H3.24a9.75 9.75 0 0 0 0 8.66l3.26-2.48Z"/><path fill="#EA4335" d="M12 6.1c1.44 0 2.73.5 3.75 1.5l2.82-2.82C16.86 3.2 14.65 2.25 12 2.25a9.75 9.75 0 0 0-8.76 5.42L6.5 10.15C7.27 7.83 9.44 6.1 12 6.1Z"/></svg>
+      Google
+    </a>
+    <a class="social-button social-github" href="{{ url_for('web.oauth_start', provider='github') }}" aria-describedby="social-note">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .8a11.2 11.2 0 0 0-3.54 21.83c.56.1.77-.24.77-.54v-2.1c-3.13.68-3.79-1.33-3.79-1.33-.5-1.3-1.25-1.65-1.25-1.65-1.02-.7.08-.69.08-.69 1.13.08 1.72 1.16 1.72 1.16 1 .1.91 2.64 3.57 1.86.1-.73.4-1.23.71-1.52-2.5-.28-5.13-1.25-5.13-5.56 0-1.23.44-2.23 1.16-3.02-.12-.29-.5-1.43.11-2.98 0 0 .95-.3 3.08 1.15a10.7 10.7 0 0 1 5.6 0c2.14-1.45 3.08-1.15 3.08-1.15.61 1.55.23 2.69.11 2.98.73.79 1.16 1.79 1.16 3.02 0 4.32-2.63 5.27-5.14 5.55.4.35.76 1.03.76 2.08v3.08c0 .3.2.65.78.54A11.2 11.2 0 0 0 12 .8Z"/></svg>
+      GitHub
+    </a>
+  </div>
+  <span id="social-note" class="visually-hidden">Tiếp tục đăng nhập an toàn bằng tài khoản nhà cung cấp.</span>
+{% endblock %}

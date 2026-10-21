@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Trang chủ | LMS{% endblock %}
+{% block content %}
+  <section class="hero">
+    <p class="eyebrow">LEARNING MANAGEMENT SYSTEM</p>
+    {% if user %}
+      <h1>Chào mừng trở lại, {{ user.get('name') or user.email }}</h1>
+      <p>Tiếp tục theo dõi các khóa học và kết quả học tập của bạn.</p>
+      <a class="button" href="{{ url_for('web.account') }}">Mở tài khoản</a>
+    {% else %}
+      <h1>Học tập và phát triển cùng LMS</h1>
+      <p>Đăng nhập để xem tài khoản, khóa học và thông tin học tập của bạn.</p>
+      <a class="button" href="{{ url_for('web.login_form') }}">Bắt đầu</a>
+    {% endif %}
+  </section>
+  <section class="section">
+    <h2>Khóa học</h2>
+    <div class="course-list">
+      {% for course in courses %}
+        <article class="card">
+          <h3>{{ course.name }}</h3>
+          <p>Mã khóa học: {{ course.id }}</p>
+        </article>
+      {% else %}
+        <p>Chưa có khóa học.</p>
+      {% endfor %}
+    </div>
+  </section>
+{% endblock %}
