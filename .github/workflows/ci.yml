@@ -5,6 +5,18 @@ on:
   pull_request:
 
 jobs:
+  semgrep:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install semgrep
+      - run: semgrep scan --config p/python --config p/flask --error --metrics=off
+
   pytest:
     runs-on: ubuntu-latest
     strategy:
