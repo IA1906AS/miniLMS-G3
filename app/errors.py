@@ -46,7 +46,7 @@ def register(app: Flask) -> None:
     @app.errorhandler(AppError)
     def handle_app_error(error: AppError) -> tuple[Any, int]:
         if error.status == 403:
-            audit.write(
+            audit.record(
                 g.get("actor", {}).get("id"),
                 "ACCESS_DENIED",
                 request.path,

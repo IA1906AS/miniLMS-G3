@@ -100,7 +100,7 @@ def update_grade(
             raise NotFound()
 
         old_score = store["enrollments"][enrollment_key]
-        audit.write(
+        audit.record(
             actor["id"],
             "UPDATE_GRADE",
             f"/courses/{course_id}/grades/{student_id}",

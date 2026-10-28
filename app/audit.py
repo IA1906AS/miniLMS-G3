@@ -13,7 +13,7 @@ def configure(path: str | Path) -> None:
     _path = path
 
 
-def write(
+def record(
     actor_id: str | None,
     action: str,
     resource: str,
