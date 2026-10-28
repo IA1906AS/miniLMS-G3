@@ -324,7 +324,7 @@ def password_reset_form(token: str | None = None) -> str | Any:
                 error="Liên kết không hợp lệ, đã hết hạn hoặc đã được sử dụng.",
             ), 400
         return redirect(url_for("web.login_form", password_reset="1"))
-    valid_token = bool(token and passwords.is_reset_token_valid(token, state))
+    valid_token = passwords.is_reset_token_valid(token, state) if token else False
     return render_template(
         "reset_password.html", reset_token=token if valid_token else None
     )

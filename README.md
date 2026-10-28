@@ -55,3 +55,15 @@ mật khẩu trong dữ liệu seed, bảo vệ cấu hình SMTP/secret, và ch�
 
 Chạy `python -m pytest -q`. Môi trường kiểm thử dùng SQLite trong bộ nhớ trừ khi
 kiểm thử chỉ định rõ đường dẫn database riêng.
+
+
+## Phân tích tĩnh với Semgrep
+
+GitHub Actions tự quét mã Python và Flask trên mỗi lần push và pull request bằng
+các ruleset `p/python` và `p/flask`. Job Semgrep sẽ đánh dấu CI thất bại nếu tìm
+thấy phát hiện cần xử lý. Để chạy cùng lệnh trên máy cá nhân:
+
+```powershell
+python -m pip install semgrep
+semgrep scan --config p/python --config p/flask --error --metrics=off
+```

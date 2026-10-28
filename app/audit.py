@@ -32,3 +32,6 @@ def write(
     }
     with _lock, open(path if path is not None else _path, "a", encoding="utf-8") as file:
         file.write(json.dumps(line) + "\n")
+
+
+record = write
