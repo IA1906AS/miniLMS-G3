@@ -96,6 +96,29 @@ def init(
             submitted_at REAL NOT NULL,
             UNIQUE (assignment_id, student_id)
         );
+        CREATE TABLE IF NOT EXISTS announcements (
+            id TEXT PRIMARY KEY,
+            course_id TEXT NOT NULL REFERENCES courses(id),
+            title TEXT NOT NULL,
+            body TEXT NOT NULL,
+            created_by TEXT NOT NULL,
+            created_at REAL NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS threads (
+            id TEXT PRIMARY KEY,
+            course_id TEXT NOT NULL REFERENCES courses(id),
+            title TEXT NOT NULL,
+            body TEXT NOT NULL,
+            created_by TEXT NOT NULL,
+            created_at REAL NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS comments (
+            id TEXT PRIMARY KEY,
+            thread_id TEXT NOT NULL REFERENCES threads(id),
+            body TEXT NOT NULL,
+            created_by TEXT NOT NULL,
+            created_at REAL NOT NULL
+        );
         """
     )
     columns = {row[1] for row in connection.execute("PRAGMA table_info(users)")}
@@ -1109,3 +1132,265 @@ def list_student_submissions(state: dict[str, Any], student_id: str) -> list[dic
             .fetchall()
         )
     return [_submission_view(row) for row in rows]
+
+
+def _announcement_view(row: tuple[Any, ...]) -> dict[str, Any]:
+    return {
+        "id": row[0],
+        "courseId": row[1],
+        "title": row[2],
+        "body": row[3],
+        "createdBy": row[4],
+        "createdAt": row[5],
+    }
+
+
+def _thread_view(row: tuple[Any, ...]) -> dict[str, Any]:
+    return {
+        "id": row[0],
+        "courseId": row[1],
+        "title": row[2],
+        "body": row[3],
+        "createdBy": row[4],
+        "createdAt": row[5],
+    }
+
+
+def _comment_view(row: tuple[Any, ...]) -> dict[str, Any]:
+    return {
+        "id": row[0],
+        "threadId": row[1],
+        "body": row[2],
+        "createdBy": row[3],
+        "createdAt": row[4],
+    }
+
+
+def create_announcement(
+    state: dict[str, Any],
+    *,
+    course_id: str,
+    title: str,
+    body: str,
+    created_by: str,
+    now: float,
+) -> dict[str, Any]:
+    announcement = {
+        "id": "an_" + uuid.uuid4().hex,
+        "courseId": course_id,
+        "title": title,
+        "body": body,
+        "createdBy": created_by,
+        "createdAt": now,
+    }
+    with state["lock"]:
+        connection = state["connection"]
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            connection.execute(
+                """
+                INSERT INTO announcements
+                    (id, course_id, title, body, created_by, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    announcement["id"],
+                    course_id,
+                    title,
+                    body,
+                    created_by,
+                    now,
+                ),
+            )
+            connection.execute("COMMIT")
+        except sqlite3.Error:
+            connection.execute("ROLLBACK")
+            raise
+    return announcement
+
+
+def list_announcements(state: dict[str, Any], course_id: str) -> list[dict[str, Any]]:
+    with state["lock"]:
+        rows = (
+            state["connection"]
+            .execute(
+                """
+            SELECT id, course_id, title, body, created_by, created_at
+              FROM announcements WHERE course_id = ? ORDER BY created_at
+            """,
+                (course_id,),
+            )
+            .fetchall()
+        )
+    return [_announcement_view(row) for row in rows]
+
+
+def get_announcement(state: dict[str, Any], announcement_id: str) -> dict[str, Any] | None:
+    with state["lock"]:
+        row = (
+            state["connection"]
+            .execute(
+                """
+            SELECT id, course_id, title, body, created_by, created_at
+              FROM announcements WHERE id = ?
+            """,
+                (announcement_id,),
+            )
+            .fetchone()
+        )
+    return _announcement_view(row) if row is not None else None
+
+
+def delete_announcement(state: dict[str, Any], announcement_id: str) -> bool:
+    with state["lock"]:
+        cursor = state["connection"].execute(
+            "DELETE FROM announcements WHERE id = ?", (announcement_id,)
+        )
+        return cursor.rowcount > 0
+
+
+def create_thread(
+    state: dict[str, Any],
+    *,
+    course_id: str,
+    title: str,
+    body: str,
+    created_by: str,
+    now: float,
+) -> dict[str, Any]:
+    thread = {
+        "id": "th_" + uuid.uuid4().hex,
+        "courseId": course_id,
+        "title": title,
+        "body": body,
+        "createdBy": created_by,
+        "createdAt": now,
+    }
+    with state["lock"]:
+        connection = state["connection"]
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            connection.execute(
+                """
+                INSERT INTO threads (id, course_id, title, body, created_by, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (thread["id"], course_id, title, body, created_by, now),
+            )
+            connection.execute("COMMIT")
+        except sqlite3.Error:
+            connection.execute("ROLLBACK")
+            raise
+    return thread
+
+
+def list_threads(state: dict[str, Any], course_id: str) -> list[dict[str, Any]]:
+    with state["lock"]:
+        rows = (
+            state["connection"]
+            .execute(
+                """
+            SELECT id, course_id, title, body, created_by, created_at
+              FROM threads WHERE course_id = ? ORDER BY created_at
+            """,
+                (course_id,),
+            )
+            .fetchall()
+        )
+    return [_thread_view(row) for row in rows]
+
+
+def get_thread(state: dict[str, Any], thread_id: str) -> dict[str, Any] | None:
+    with state["lock"]:
+        row = (
+            state["connection"]
+            .execute(
+                """
+            SELECT id, course_id, title, body, created_by, created_at
+              FROM threads WHERE id = ?
+            """,
+                (thread_id,),
+            )
+            .fetchone()
+        )
+    return _thread_view(row) if row is not None else None
+
+
+def delete_thread(state: dict[str, Any], thread_id: str) -> bool:
+    with state["lock"]:
+        connection = state["connection"]
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            connection.execute("DELETE FROM comments WHERE thread_id = ?", (thread_id,))
+            cursor = connection.execute("DELETE FROM threads WHERE id = ?", (thread_id,))
+            connection.execute("COMMIT")
+        except sqlite3.Error:
+            connection.execute("ROLLBACK")
+            raise
+        return cursor.rowcount > 0
+
+
+def create_comment(
+    state: dict[str, Any], *, thread_id: str, body: str, created_by: str, now: float
+) -> dict[str, Any]:
+    comment = {
+        "id": "cm_" + uuid.uuid4().hex,
+        "threadId": thread_id,
+        "body": body,
+        "createdBy": created_by,
+        "createdAt": now,
+    }
+    with state["lock"]:
+        connection = state["connection"]
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            connection.execute(
+                """
+                INSERT INTO comments (id, thread_id, body, created_by, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (comment["id"], thread_id, body, created_by, now),
+            )
+            connection.execute("COMMIT")
+        except sqlite3.Error:
+            connection.execute("ROLLBACK")
+            raise
+    return comment
+
+
+def list_comments(state: dict[str, Any], thread_id: str) -> list[dict[str, Any]]:
+    with state["lock"]:
+        rows = (
+            state["connection"]
+            .execute(
+                """
+            SELECT id, thread_id, body, created_by, created_at
+              FROM comments WHERE thread_id = ? ORDER BY created_at
+            """,
+                (thread_id,),
+            )
+            .fetchall()
+        )
+    return [_comment_view(row) for row in rows]
+
+
+def get_comment(state: dict[str, Any], comment_id: str) -> dict[str, Any] | None:
+    with state["lock"]:
+        row = (
+            state["connection"]
+            .execute(
+                """
+            SELECT id, thread_id, body, created_by, created_at
+              FROM comments WHERE id = ?
+            """,
+                (comment_id,),
+            )
+            .fetchone()
+        )
+    return _comment_view(row) if row is not None else None
+
+
+def delete_comment(state: dict[str, Any], comment_id: str) -> bool:
+    with state["lock"]:
+        cursor = state["connection"].execute("DELETE FROM comments WHERE id = ?", (comment_id,))
+        return cursor.rowcount > 0

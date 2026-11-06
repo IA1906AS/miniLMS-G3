@@ -110,6 +110,9 @@ Dữ liệu mẫu lấy từ `app/seed.json` (6 tài khoản, 2 khóa học). Tr
 | `POST /admin/users/<id>/lock`, `/unlock`, `GET /admin/audit` | khoá/mở khoá + audit (bước 3.3) |
 | `POST|GET /courses/<id>/assignments` | tạo/xem bài tập (GV môn, ADMIN; SV đã ghi danh) |
 | `POST|GET /assignments/<id>/submissions`, `GET /me/submissions` | nộp/xem bài nộp (bước 3.4) |
+| `POST|GET /courses/<id>/announcements`, `DELETE /announcements/<id>` | thông báo lớp (bước 3.5) |
+| `POST|GET /courses/<id>/threads`, `DELETE /threads/<id>` | thảo luận lớp |
+| `POST|GET /threads/<id>/comments`, `DELETE /comments/<id>` | bình luận (văn bản thuần) |
 | `POST /auth/logout` | vô hiệu token hiện tại (mọi vai trò) |
 | `POST /me/password`, `GET`, `PUT /users/me` | đổi mật khẩu, xem/sửa hồ sơ (bước 3.1) |
 | `POST /me/enrollments` `{"courseId": ...}` | sinh viên tự đăng ký (kèm outbox) |
@@ -164,7 +167,8 @@ Thiết kế, tiêu chí nghiệm thu và kịch bản demo:
 | GĐ3 bước 3.2: khoá học, yêu cầu mở môn, ghi danh | Xong | [ADR 0009](docs/decisions/0009-yeu-cau-mo-mon.md) |
 | GĐ3 bước 3.3: khoá tài khoản, audit API | Xong | [ADR 0010](docs/decisions/0010-khoa-tai-khoan.md) |
 | GĐ3 bước 3.4: bài tập, nộp bài, hạn nộp | Xong | [ADR 0011](docs/decisions/0011-bai-tap-nop-bai.md) |
-| GĐ3 bước 3.5–3.6: diễn đàn, optimistic locking | Chưa làm | làm theo từng bước, chờ duyệt |
+| GĐ3 bước 3.5: thông báo, thảo luận | Xong | [ADR 0012](docs/decisions/0012-dien-dan-thong-bao.md) |
+| GĐ3 bước 3.6: optimistic locking (tuỳ chọn) | Chưa làm | chờ duyệt |
 | Quality gate + CI | Xong | [ADR 0006](docs/decisions/0006-quality-gate-2-tang.md) |
 | Pattern #3: optimistic locking khi sửa điểm | Chưa làm | kế hoạch trong tài liệu pattern |
 | UI quản trị người dùng/ghi danh | Chưa làm | mới có API |

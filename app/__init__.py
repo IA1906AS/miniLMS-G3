@@ -17,6 +17,7 @@ from . import (
     auth,
     courses,
     errors,
+    forum,
     gate,
     outbox,
     passwords,
@@ -107,6 +108,7 @@ def create_app(config: Mapping[str, Any] | None = None) -> Flask:
     app.register_blueprint(account.bp)
     app.register_blueprint(courses.bp)
     app.register_blueprint(assignments.bp)
+    app.register_blueprint(forum.bp)
 
     @app.post("/auth/login")
     def login() -> Any:

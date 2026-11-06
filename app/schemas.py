@@ -248,3 +248,27 @@ def parse_submission_body(body: Any) -> str:
     if not isinstance(content, str) or not content.strip() or len(content) > 5000:
         raise ValidationError()
     return content
+
+
+def _parse_text(value: Any, limit: int) -> str:
+    if not isinstance(value, str) or not value.strip() or len(value) > limit:
+        raise ValidationError()
+    return value
+
+
+def parse_announcement_body(body: Any) -> tuple[str, str]:
+    if not isinstance(body, dict) or set(body) != {"title", "body"}:
+        raise ValidationError()
+    return _parse_text(body["title"], 200), _parse_text(body["body"], 5000)
+
+
+def parse_thread_body(body: Any) -> tuple[str, str]:
+    if not isinstance(body, dict) or set(body) != {"title", "body"}:
+        raise ValidationError()
+    return _parse_text(body["title"], 200), _parse_text(body["body"], 5000)
+
+
+def parse_comment_body(body: Any) -> str:
+    if not isinstance(body, dict) or set(body) != {"body"}:
+        raise ValidationError()
+    return _parse_text(body["body"], 2000)
