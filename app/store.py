@@ -79,6 +79,23 @@ def init(
         );
         CREATE INDEX IF NOT EXISTS idx_outbox_due
             ON outbox_events (status, next_attempt_at);
+        CREATE TABLE IF NOT EXISTS assignments (
+            id TEXT PRIMARY KEY,
+            course_id TEXT NOT NULL REFERENCES courses(id),
+            title TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            due_at REAL NOT NULL,
+            created_by TEXT NOT NULL,
+            created_at REAL NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS submissions (
+            id TEXT PRIMARY KEY,
+            assignment_id TEXT NOT NULL REFERENCES assignments(id),
+            student_id TEXT NOT NULL REFERENCES users(id),
+            content TEXT NOT NULL,
+            submitted_at REAL NOT NULL,
+            UNIQUE (assignment_id, student_id)
+        );
         """
     )
     columns = {row[1] for row in connection.execute("PRAGMA table_info(users)")}
@@ -888,3 +905,207 @@ def reject_course_request(
             (now, decided_by, request_id),
         )
         return cursor.rowcount > 0
+
+
+def _assignment_view(row: tuple[Any, ...]) -> dict[str, Any]:
+    return {
+        "id": row[0],
+        "courseId": row[1],
+        "title": row[2],
+        "description": row[3],
+        "dueAt": row[4],
+        "createdBy": row[5],
+        "createdAt": row[6],
+    }
+
+
+def _submission_view(row: tuple[Any, ...]) -> dict[str, Any]:
+    return {
+        "id": row[0],
+        "assignmentId": row[1],
+        "studentId": row[2],
+        "content": row[3],
+        "submittedAt": row[4],
+    }
+
+
+def create_assignment(
+    state: dict[str, Any],
+    *,
+    course_id: str,
+    title: str,
+    description: str,
+    due_at: float,
+    created_by: str,
+    now: float,
+) -> dict[str, Any]:
+    assignment = {
+        "id": "a_" + uuid.uuid4().hex,
+        "courseId": course_id,
+        "title": title,
+        "description": description,
+        "dueAt": due_at,
+        "createdBy": created_by,
+        "createdAt": now,
+    }
+    with state["lock"]:
+        connection = state["connection"]
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            connection.execute(
+                """
+                INSERT INTO assignments
+                    (id, course_id, title, description, due_at, created_by, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    assignment["id"],
+                    course_id,
+                    title,
+                    description,
+                    due_at,
+                    created_by,
+                    now,
+                ),
+            )
+            connection.execute("COMMIT")
+        except sqlite3.Error:
+            connection.execute("ROLLBACK")
+            raise
+    return assignment
+
+
+def get_assignment(state: dict[str, Any], assignment_id: str) -> dict[str, Any] | None:
+    with state["lock"]:
+        row = (
+            state["connection"]
+            .execute(
+                """
+            SELECT id, course_id, title, description, due_at, created_by, created_at
+              FROM assignments WHERE id = ?
+            """,
+                (assignment_id,),
+            )
+            .fetchone()
+        )
+    return _assignment_view(row) if row is not None else None
+
+
+def list_assignments(state: dict[str, Any], course_id: str) -> list[dict[str, Any]]:
+    with state["lock"]:
+        rows = (
+            state["connection"]
+            .execute(
+                """
+            SELECT id, course_id, title, description, due_at, created_by, created_at
+              FROM assignments WHERE course_id = ? ORDER BY created_at
+            """,
+                (course_id,),
+            )
+            .fetchall()
+        )
+    return [_assignment_view(row) for row in rows]
+
+
+def create_submission(
+    state: dict[str, Any],
+    *,
+    assignment_id: str,
+    student_id: str,
+    content: str,
+    now: float,
+) -> tuple[str, dict[str, Any] | None]:
+    """Trả ('created'|'unchanged'|'conflict', submission)."""
+    with state["lock"]:
+        connection = state["connection"]
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            row = connection.execute(
+                """
+                SELECT id, assignment_id, student_id, content, submitted_at
+                  FROM submissions WHERE assignment_id = ? AND student_id = ?
+                """,
+                (assignment_id, student_id),
+            ).fetchone()
+            if row is not None:
+                connection.execute("COMMIT")
+                if row[3] == content:
+                    return "unchanged", _submission_view(row)
+                return "conflict", None
+
+            submission = {
+                "id": "s_" + uuid.uuid4().hex,
+                "assignmentId": assignment_id,
+                "studentId": student_id,
+                "content": content,
+                "submittedAt": now,
+            }
+            connection.execute(
+                """
+                INSERT INTO submissions
+                    (id, assignment_id, student_id, content, submitted_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    submission["id"],
+                    assignment_id,
+                    student_id,
+                    content,
+                    now,
+                ),
+            )
+            connection.execute("COMMIT")
+        except sqlite3.Error:
+            connection.execute("ROLLBACK")
+            raise
+    return "created", submission
+
+
+def get_submission(
+    state: dict[str, Any], assignment_id: str, student_id: str
+) -> dict[str, Any] | None:
+    with state["lock"]:
+        row = (
+            state["connection"]
+            .execute(
+                """
+            SELECT id, assignment_id, student_id, content, submitted_at
+              FROM submissions WHERE assignment_id = ? AND student_id = ?
+            """,
+                (assignment_id, student_id),
+            )
+            .fetchone()
+        )
+    return _submission_view(row) if row is not None else None
+
+
+def list_submissions(state: dict[str, Any], assignment_id: str) -> list[dict[str, Any]]:
+    with state["lock"]:
+        rows = (
+            state["connection"]
+            .execute(
+                """
+            SELECT id, assignment_id, student_id, content, submitted_at
+              FROM submissions WHERE assignment_id = ? ORDER BY submitted_at
+            """,
+                (assignment_id,),
+            )
+            .fetchall()
+        )
+    return [_submission_view(row) for row in rows]
+
+
+def list_student_submissions(state: dict[str, Any], student_id: str) -> list[dict[str, Any]]:
+    with state["lock"]:
+        rows = (
+            state["connection"]
+            .execute(
+                """
+            SELECT id, assignment_id, student_id, content, submitted_at
+              FROM submissions WHERE student_id = ? ORDER BY submitted_at
+            """,
+                (student_id,),
+            )
+            .fetchall()
+        )
+    return [_submission_view(row) for row in rows]

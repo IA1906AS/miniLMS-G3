@@ -1,5 +1,6 @@
 import math
 import re
+from datetime import UTC, datetime
 from typing import Any
 
 from .errors import ValidationError
@@ -200,3 +201,50 @@ def parse_audit_limit(raw: str | None) -> int:
     if not 1 <= limit <= 1000:
         raise ValidationError()
     return limit
+
+
+def parse_due_at(value: Any) -> float:
+    """Chấp nhận epoch giây hoặc chuỗi ISO-8601 (có/không có 'Z')."""
+    if isinstance(value, bool):
+        raise ValidationError()
+    if isinstance(value, (int, float)):
+        due = float(value)
+    elif isinstance(value, str):
+        text = value.strip()
+        if text.endswith(("Z", "z")):
+            text = text[:-1] + "+00:00"
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError as error:
+            raise ValidationError() from error
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        due = parsed.timestamp()
+    else:
+        raise ValidationError()
+    if not math.isfinite(due):
+        raise ValidationError()
+    return due
+
+
+def parse_assignment_body(body: Any) -> tuple[str, str, float]:
+    if not isinstance(body, dict) or not {"title", "dueAt"} <= set(body):
+        raise ValidationError()
+    if not set(body) <= {"title", "description", "dueAt"}:
+        raise ValidationError()
+    title = body["title"]
+    if not isinstance(title, str) or not title.strip() or len(title) > 200:
+        raise ValidationError()
+    description = body.get("description", "")
+    if not isinstance(description, str) or len(description) > 2000:
+        raise ValidationError()
+    return title.strip(), description, parse_due_at(body["dueAt"])
+
+
+def parse_submission_body(body: Any) -> str:
+    if not isinstance(body, dict) or set(body) != {"content"}:
+        raise ValidationError()
+    content = body["content"]
+    if not isinstance(content, str) or not content.strip() or len(content) > 5000:
+        raise ValidationError()
+    return content

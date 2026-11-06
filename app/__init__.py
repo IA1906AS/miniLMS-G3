@@ -12,6 +12,7 @@ from flask import Flask, g, jsonify, request, session
 from . import (
     account,
     admin,
+    assignments,
     audit,
     auth,
     courses,
@@ -105,6 +106,7 @@ def create_app(config: Mapping[str, Any] | None = None) -> Flask:
     app.register_blueprint(admin.bp)
     app.register_blueprint(account.bp)
     app.register_blueprint(courses.bp)
+    app.register_blueprint(assignments.bp)
 
     @app.post("/auth/login")
     def login() -> Any:
