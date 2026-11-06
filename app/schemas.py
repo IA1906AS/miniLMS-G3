@@ -168,3 +168,24 @@ def parse_profile_update_body(body: Any) -> dict[str, str]:
             raise ValidationError()
         updates["bio"] = bio
     return updates
+
+
+def validate_course_name(name: Any) -> str:
+    if not isinstance(name, str) or not name.strip() or len(name) > 200:
+        raise ValidationError()
+    return name.strip()
+
+
+def parse_course_body(body: Any) -> tuple[str, str]:
+    if not isinstance(body, dict) or set(body) != {"name", "instructorId"}:
+        raise ValidationError()
+    instructor_id = body["instructorId"]
+    if not isinstance(instructor_id, str) or not instructor_id.strip():
+        raise ValidationError()
+    return validate_course_name(body["name"]), instructor_id
+
+
+def parse_course_request_body(body: Any) -> str:
+    if not isinstance(body, dict) or set(body) != {"name"}:
+        raise ValidationError()
+    return validate_course_name(body["name"])

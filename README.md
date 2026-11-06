@@ -101,6 +101,9 @@ Dữ liệu mẫu lấy từ `app/seed.json` (6 tài khoản, 2 khóa học). Tr
 | `GET /me` | thông tin actor từ JWT |
 | `GET /courses/<id>/grades`, `PUT /courses/<id>/grades/<student_id>` | xem/sửa điểm |
 | `GET /courses`, `GET /courses/<id>` | danh sách/chi tiết môn theo quyền (GĐ3) |
+| `POST /courses` | ADMIN tạo môn, id `c_<uuid4>` |
+| `POST /course-requests`, `GET /course-requests` | GV gửi yêu cầu mở môn (ADMIN duyệt) |
+| `POST /course-requests/<id>/approve`, `/reject` | ADMIN duyệt/từ chối yêu cầu |
 | `POST /courses/<id>/enrollments`, `DELETE .../enrollments/<student_id>` | ADMIN/GV quản lý ghi danh |
 | `GET /me/grades` | sinh viên xem điểm của chính mình |
 | `GET /admin/users`, `PATCH /admin/users/<id>/role` | quản trị người dùng (ADMIN) |
@@ -155,7 +158,8 @@ Thiết kế, tiêu chí nghiệm thu và kịch bản demo:
 | Pattern #8: đăng ký khóa học + outbox | Xong | [ADR 0005](docs/decisions/0005-outbox-email-dang-ky.md) |
 | GĐ3: phân quyền mở rộng (8 endpoint) | Xong | [ADR 0007](docs/decisions/0007-giai-doan-3-phan-quyen.md) |
 | GĐ3 bước 3.1: logout, đổi mật khẩu, hồ sơ | Xong | [ADR 0008](docs/decisions/0008-token-vo-hieu-theo-giay.md) |
-| GĐ3 bước 3.2–3.6: khoá học, quản trị, bài tập, diễn đàn, version | Chưa làm | làm theo từng bước, chờ duyệt |
+| GĐ3 bước 3.2: khoá học, yêu cầu mở môn, ghi danh | Xong | [ADR 0009](docs/decisions/0009-yeu-cau-mo-mon.md) |
+| GĐ3 bước 3.3–3.6: quản trị, bài tập, diễn đàn, version | Chưa làm | làm theo từng bước, chờ duyệt |
 | Quality gate + CI | Xong | [ADR 0006](docs/decisions/0006-quality-gate-2-tang.md) |
 | Pattern #3: optimistic locking khi sửa điểm | Chưa làm | kế hoạch trong tài liệu pattern |
 | UI quản trị người dùng/ghi danh | Chưa làm | mới có API |

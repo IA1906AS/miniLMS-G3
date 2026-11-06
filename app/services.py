@@ -11,13 +11,8 @@ __all__ = [
     "authorize_update",
     "change_role",
     "enroll_in_course",
-    "enroll_student",
-    "get_course",
     "get_grades",
-    "list_courses",
     "list_users",
-    "my_grades",
-    "unenroll_student",
     "update_grade",
     "using_store",
 ]
@@ -155,114 +150,6 @@ def enroll_in_course(actor: dict[str, Any], course_id: str) -> dict[str, Any]:
             "score": 0.0,
             "outboxEventId": event["eventId"],
         }
-
-
-# --- Giai đoạn 3: phân quyền mở rộng -------------------------------------
-
-
-def _course_view(course: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "id": course["id"],
-        "name": course["name"],
-        "instructorId": course["instructorId"],
-    }
-
-
-def list_courses(actor: dict[str, Any]) -> list[dict[str, Any]]:
-    store = _store()
-    role = _actor_role(actor)
-    with store["lock"]:
-        courses = list(store["courses"].values())
-        if role == "ADMIN":
-            visible = courses
-        elif role == "INSTRUCTOR":
-            visible = [c for c in courses if c["instructorId"] == actor.get("id")]
-        elif role == "STUDENT":
-            visible = [c for c in courses if (c["id"], actor.get("id")) in store["enrollments"]]
-        else:
-            raise Forbidden()
-        return [_course_view(course) for course in visible]
-
-
-def get_course(actor: dict[str, Any], course_id: str) -> dict[str, Any]:
-    store = _store()
-    role = _actor_role(actor)
-    with store["lock"]:
-        course = _course(course_id)
-        if role == "ADMIN":
-            return _course_view(course)
-        if role == "INSTRUCTOR" and course["instructorId"] == actor.get("id"):
-            return _course_view(course)
-        if role == "STUDENT" and (course_id, actor.get("id")) in store["enrollments"]:
-            return _course_view(course)
-        raise Forbidden()
-
-
-def authorize_manage(actor: dict[str, Any], course_id: str) -> dict[str, Any]:
-    """Kiểm tra môn tồn tại (404) rồi quyền quản lý môn (403)."""
-    store = _store()
-    with store["lock"]:
-        course = _course(course_id)
-        if _actor_role(actor) == "ADMIN":
-            return course
-        if _actor_role(actor) == "INSTRUCTOR" and course["instructorId"] == actor.get("id"):
-            return course
-        raise Forbidden()
-
-
-def enroll_student(actor: dict[str, Any], course_id: str, student_id: str) -> dict[str, Any]:
-    store = _store()
-    with store["lock"]:
-        authorize_manage(actor, course_id)
-        if student_id not in store["users"]:
-            raise NotFound()
-        try:
-            store_module.add_enrollment(store, course_id, student_id)
-        except ValueError as error:
-            raise Conflict() from error
-        audit.record(
-            actor["id"],
-            "ENROLL_STUDENT",
-            f"/courses/{course_id}/enrollments",
-            "OK",
-            studentId=student_id,
-            path=store["audit_log_path"],
-        )
-        return {"courseId": course_id, "studentId": student_id}
-
-
-def unenroll_student(actor: dict[str, Any], course_id: str, student_id: str) -> dict[str, Any]:
-    store = _store()
-    with store["lock"]:
-        authorize_manage(actor, course_id)
-        if not store_module.remove_enrollment(store, course_id, student_id):
-            raise NotFound()
-        audit.record(
-            actor["id"],
-            "UNENROLL_STUDENT",
-            f"/courses/{course_id}/enrollments/{student_id}",
-            "OK",
-            studentId=student_id,
-            path=store["audit_log_path"],
-        )
-        return {"courseId": course_id, "studentId": student_id, "removed": True}
-
-
-def my_grades(actor: dict[str, Any]) -> list[dict[str, Any]]:
-    store = _store()
-    if _actor_role(actor) != "STUDENT":
-        raise Forbidden()
-    student_id = actor.get("id")
-    with store["lock"]:
-        return [
-            {
-                "courseId": course_id,
-                "courseName": store["courses"][course_id]["name"],
-                "score": score,
-            }
-            for (course_id, enrolled_id), score in store["enrollments"].items()
-            if enrolled_id == student_id and course_id in store["courses"]
-        ]
 
 
 def list_users(actor: dict[str, Any]) -> list[dict[str, Any]]:

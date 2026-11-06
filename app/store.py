@@ -4,6 +4,7 @@ import secrets
 import sqlite3
 import threading
 import time
+import uuid
 from collections.abc import Callable
 from typing import Any
 
@@ -34,6 +35,15 @@ def init(
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
             instructor_id TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS course_requests (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            instructor_id TEXT NOT NULL REFERENCES users(id),
+            status TEXT NOT NULL DEFAULT 'PENDING',
+            created_at REAL NOT NULL,
+            decided_at REAL,
+            decided_by TEXT
         );
         CREATE TABLE IF NOT EXISTS enrollments (
             course_id TEXT NOT NULL REFERENCES courses(id),
@@ -697,3 +707,158 @@ def update_password_hash(state: dict[str, Any], user_id: str, password_hash: byt
         user = state["users"].get(user_id)
         if user is not None:
             user["pw_hash"] = password_hash
+
+
+def create_course(state: dict[str, Any], *, name: str, instructor_id: str) -> dict[str, Any]:
+    course = {"id": "c_" + uuid.uuid4().hex, "name": name, "instructorId": instructor_id}
+    with state["lock"]:
+        connection = state["connection"]
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            connection.execute(
+                "INSERT INTO courses (id, name, instructor_id) VALUES (?, ?, ?)",
+                (course["id"], course["name"], course["instructorId"]),
+            )
+            connection.execute("COMMIT")
+        except sqlite3.Error:
+            connection.execute("ROLLBACK")
+            raise
+        state["courses"][course["id"]] = course
+    return course
+
+
+def create_course_request(
+    state: dict[str, Any], *, name: str, instructor_id: str, now: float
+) -> dict[str, Any]:
+    request = {
+        "id": "cr_" + uuid.uuid4().hex,
+        "name": name,
+        "instructorId": instructor_id,
+        "status": "PENDING",
+        "createdAt": now,
+    }
+    with state["lock"]:
+        connection = state["connection"]
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            connection.execute(
+                """
+                INSERT INTO course_requests (id, name, instructor_id, status, created_at)
+                VALUES (?, ?, ?, 'PENDING', ?)
+                """,
+                (request["id"], name, instructor_id, now),
+            )
+            connection.execute("COMMIT")
+        except sqlite3.Error:
+            connection.execute("ROLLBACK")
+            raise
+    return request
+
+
+def _request_view(row: tuple[Any, ...]) -> dict[str, Any]:
+    return {
+        "id": row[0],
+        "name": row[1],
+        "instructorId": row[2],
+        "status": row[3],
+        "createdAt": row[4],
+        "decidedAt": row[5],
+        "decidedBy": row[6],
+    }
+
+
+def list_course_requests(
+    state: dict[str, Any], *, instructor_id: str | None = None
+) -> list[dict[str, Any]]:
+    with state["lock"]:
+        if instructor_id is None:
+            rows = (
+                state["connection"]
+                .execute(
+                    """
+                SELECT id, name, instructor_id, status, created_at, decided_at, decided_by
+                  FROM course_requests ORDER BY created_at
+                """
+                )
+                .fetchall()
+            )
+        else:
+            rows = (
+                state["connection"]
+                .execute(
+                    """
+                SELECT id, name, instructor_id, status, created_at, decided_at, decided_by
+                  FROM course_requests WHERE instructor_id = ? ORDER BY created_at
+                """,
+                    (instructor_id,),
+                )
+                .fetchall()
+            )
+    return [_request_view(row) for row in rows]
+
+
+def get_course_request(state: dict[str, Any], request_id: str) -> dict[str, Any] | None:
+    with state["lock"]:
+        row = (
+            state["connection"]
+            .execute(
+                """
+            SELECT id, name, instructor_id, status, created_at, decided_at, decided_by
+              FROM course_requests WHERE id = ?
+            """,
+                (request_id,),
+            )
+            .fetchone()
+        )
+    return _request_view(row) if row is not None else None
+
+
+def approve_course_request(
+    state: dict[str, Any],
+    *,
+    request_id: str,
+    course: dict[str, Any],
+    decided_by: str,
+    now: float,
+) -> bool:
+    """Tạo môn và đóng yêu cầu trong cùng một transaction."""
+    with state["lock"]:
+        connection = state["connection"]
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            cursor = connection.execute(
+                """
+                UPDATE course_requests
+                   SET status = 'APPROVED', decided_at = ?, decided_by = ?
+                 WHERE id = ? AND status = 'PENDING'
+                """,
+                (now, decided_by, request_id),
+            )
+            if cursor.rowcount == 0:
+                connection.execute("ROLLBACK")
+                return False
+            connection.execute(
+                "INSERT INTO courses (id, name, instructor_id) VALUES (?, ?, ?)",
+                (course["id"], course["name"], course["instructorId"]),
+            )
+            connection.execute("COMMIT")
+        except sqlite3.Error:
+            connection.execute("ROLLBACK")
+            raise
+        state["courses"][course["id"]] = course
+    return True
+
+
+def reject_course_request(
+    state: dict[str, Any], *, request_id: str, decided_by: str, now: float
+) -> bool:
+    with state["lock"]:
+        cursor = state["connection"].execute(
+            """
+            UPDATE course_requests
+               SET status = 'REJECTED', decided_at = ?, decided_by = ?
+             WHERE id = ? AND status = 'PENDING'
+            """,
+            (now, decided_by, request_id),
+        )
+        return cursor.rowcount > 0

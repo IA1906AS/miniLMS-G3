@@ -13,6 +13,7 @@ from . import (
     account,
     audit,
     auth,
+    courses,
     errors,
     extended,
     gate,
@@ -103,6 +104,7 @@ def create_app(config: Mapping[str, Any] | None = None) -> Flask:
     app.register_blueprint(web.web)
     app.register_blueprint(extended.bp)
     app.register_blueprint(account.bp)
+    app.register_blueprint(courses.bp)
 
     @app.post("/auth/login")
     def login() -> Any:
