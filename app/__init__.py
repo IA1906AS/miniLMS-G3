@@ -20,8 +20,10 @@ from . import (
     forum,
     gate,
     grades_v2,
+    materials,
     outbox,
     passwords,
+    quizzes,
     schemas,
     services,
     store,
@@ -111,6 +113,8 @@ def create_app(config: Mapping[str, Any] | None = None) -> Flask:
     app.register_blueprint(assignments.bp)
     app.register_blueprint(forum.bp)
     app.register_blueprint(grades_v2.bp)
+    app.register_blueprint(materials.bp)
+    app.register_blueprint(quizzes.bp)
 
     @app.post("/auth/login")
     def login() -> Any:
@@ -196,6 +200,14 @@ def create_app(config: Mapping[str, Any] | None = None) -> Flask:
         course_id = schemas.parse_self_enrollment_body(request.get_json(silent=True))
         with services.using_store(state):
             return jsonify(services.enroll_in_course(g.actor, course_id)), 201
+
+    @app.get("/api/docs/openapi.yaml")
+    def openapi_spec() -> Any:
+        spec_path = os.path.abspath(os.path.join(app.root_path, "..", "docs", "openapi.yaml"))
+        if not os.path.isfile(spec_path):
+            return {"error": "NOT_FOUND"}, 404
+        from flask import send_file
+        return send_file(spec_path, mimetype="text/yaml")
 
     @app.cli.group("outbox")
     def outbox_cli() -> None:

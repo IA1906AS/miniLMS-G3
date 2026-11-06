@@ -31,7 +31,11 @@ def _course_view(course: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def list_courses(actor: dict[str, Any]) -> list[dict[str, Any]]:
+def list_courses(
+    actor: dict[str, Any],
+    q: str | None = None,
+    instructor_id: str | None = None,
+) -> list[dict[str, Any]]:
     state = current_store()
     role = _role(actor)
     with state["lock"]:
@@ -48,6 +52,10 @@ def list_courses(actor: dict[str, Any]) -> list[dict[str, Any]]:
             ]
         else:
             raise Forbidden()
+        if q is not None and q.strip():
+            visible = [c for c in visible if q.strip().lower() in c["name"].lower()]
+        if instructor_id is not None and instructor_id.strip():
+            visible = [c for c in visible if c["instructorId"] == instructor_id.strip()]
         return [_course_view(course) for course in visible]
 
 
@@ -86,6 +94,60 @@ def create_course(actor: dict[str, Any], name: str, instructor_id: str) -> dict[
             path=state["audit_log_path"],
         )
         return _course_view(course)
+
+
+def update_course(actor: dict[str, Any], course_id: str, name: str) -> dict[str, Any]:
+    state = current_store()
+    with state["lock"]:
+        authorize_manage(actor, course_id)
+        course = store_module.update_course(state, course_id, name)
+        if course is None:
+            raise NotFound()
+        audit.record(
+            actor["id"],
+            "COURSE_UPDATE",
+            f"/courses/{course_id}",
+            "OK",
+            courseId=course_id,
+            path=state["audit_log_path"],
+        )
+        return _course_view(course)
+
+
+def delete_course(actor: dict[str, Any], course_id: str) -> dict[str, Any]:
+    state = current_store()
+    with state["lock"]:
+        if _role(actor) != "ADMIN":
+            raise Forbidden()
+        if course_id not in state["courses"]:
+            raise NotFound()
+        if not store_module.delete_course(state, course_id):
+            raise NotFound()
+        audit.record(
+            actor["id"],
+            "COURSE_DELETE",
+            f"/courses/{course_id}",
+            "OK",
+            courseId=course_id,
+            path=state["audit_log_path"],
+        )
+        return {"id": course_id, "deleted": True}
+
+
+def list_course_members(actor: dict[str, Any], course_id: str) -> list[dict[str, Any]]:
+    state = current_store()
+    role = _role(actor)
+    with state["lock"]:
+        course = _course(state, course_id)
+        if role == "ADMIN":
+            pass
+        elif role == "INSTRUCTOR" and course["instructorId"] == actor.get("id"):
+            pass
+        elif role == "STUDENT" and (course_id, actor.get("id")) in state["enrollments"]:
+            pass
+        else:
+            raise Forbidden()
+        return store_module.list_course_members(state, course_id)
 
 
 def request_course(actor: dict[str, Any], name: str) -> dict[str, Any]:

@@ -82,6 +82,13 @@ def enrollment_confirmation_payload(
 
 def build_message(event: Mapping[str, Any]) -> Message:
     payload = event["payload"]
+    if event.get("type") == "announcement.posted":
+        return {
+            "to": str(payload.get("to", "")),
+            "subject": str(payload.get("subject", "")),
+            "body": str(payload.get("body", "")),
+            "eventId": str(event["eventId"]),
+        }
     course_name = str(payload.get("courseName", ""))
     student_name = str(payload.get("studentName") or "").strip()
     greeting = f"Chào {student_name}," if student_name else "Chào bạn,"

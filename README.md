@@ -116,6 +116,14 @@ Dữ liệu mẫu lấy từ `app/seed.json` (6 tài khoản, 2 khóa học). Tr
 | `GET|PUT /courses/<id>/grades/<sid>/v2` | sửa điểm có `expectedVersion`, lệch → 409 (bước 3.6) |
 | `POST /auth/logout` | vô hiệu token hiện tại (mọi vai trò) |
 | `POST /me/password`, `GET`, `PUT /users/me` | đổi mật khẩu, xem/sửa hồ sơ (bước 3.1) |
+| `POST /users/me/avatar`, `GET /users/<id>/avatar` | tải lên và xem ảnh đại diện |
+| `PATCH /courses/<id>`, `DELETE /courses/<id>` | sửa môn (GV/ADMIN), gỡ bỏ môn (ADMIN) |
+| `GET /courses/<id>/members` | xem thông tin công khai thành viên cùng lớp |
+| `POST|GET /courses/<id>/materials`, `GET /materials/<id>/download` | tải lên/xem/tải tài liệu bài giảng |
+| `POST /submissions/<id>/grade`, `GET /submissions/<id>/download` | chấm điểm/nhận xét và tải file bài nộp |
+| `POST|GET /courses/<id>/quizzes`, `GET|DELETE /quizzes/<id>` | thiết lập/xem/xoá bài kiểm tra trắc nghiệm |
+| `POST /quizzes/<id>/attempts`, `.../<aid>/submit` | làm bài trắc nghiệm và máy chủ chấm điểm tự động |
+| `GET /api/docs/openapi.yaml` | đặc tả REST API theo chuẩn OpenAPI 3.0 |
 | `POST /me/enrollments` `{"courseId": ...}` | sinh viên tự đăng ký (kèm outbox) |
 | `POST /courses/<id>/enroll` | đăng ký từ giao diện (CSRF) |
 
@@ -170,6 +178,10 @@ Thiết kế, tiêu chí nghiệm thu và kịch bản demo:
 | GĐ3 bước 3.4: bài tập, nộp bài, hạn nộp | Xong | [ADR 0011](docs/decisions/0011-bai-tap-nop-bai.md) |
 | GĐ3 bước 3.5: thông báo, thảo luận | Xong | [ADR 0012](docs/decisions/0012-dien-dan-thong-bao.md) |
 | GĐ3 bước 3.6: optimistic locking (tuỳ chọn) | Xong | [ADR 0013](docs/decisions/0013-optimistic-locking-diem.md) |
+| Lưu trữ tệp: Avatar, tài liệu bài giảng, tệp bài nộp | Xong | Chống path traversal, kiểm soát mime/size |
+| Bài kiểm tra trắc nghiệm & chấm điểm tự động | Xong | Đối chiếu đáp án & tính điểm trên server |
+| Quản trị khoá học: tìm kiếm, sửa, xoá cascade | Xong | Tra cứu `?q=&instructor=`, gỡ bỏ môn |
+| OpenAPI 3.0 (Swagger spec) | Xong | [docs/openapi.yaml](docs/openapi.yaml) |
 | Quality gate + CI | Xong | [ADR 0006](docs/decisions/0006-quality-gate-2-tang.md) |
 | Pattern #3: optimistic locking khi sửa điểm | Chưa làm | kế hoạch trong tài liệu pattern |
 | UI quản trị người dùng/ghi danh | Chưa làm | mới có API |

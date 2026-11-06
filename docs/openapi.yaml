@@ -1,0 +1,661 @@
+openapi: 3.0.3
+info:
+  title: MiniLMS API Specification
+  description: |
+    Tài liệu đặc tả toàn bộ REST API cho Hệ thống quản lý học tập (Learning Management System - MiniLMS).
+    Hỗ trợ xác thực đa tầng qua JSON Web Token (JWT Bearer) và Cookie phiên HttpOnly.
+  version: 1.0.0
+servers:
+  - url: http://localhost:5000
+    description: Máy chủ phát triển cục bộ
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          example: NOT_FOUND
+
+    UserProfile:
+      type: object
+      properties:
+        id:
+          type: string
+          example: u4
+        email:
+          type: string
+          example: chi.sv@lms.test
+        fullName:
+          type: string
+          example: Chi Nguyễn
+        bio:
+          type: string
+          example: Sinh viên CNTT
+        role:
+          type: string
+          enum: [ADMIN, INSTRUCTOR, STUDENT]
+          example: STUDENT
+
+    Course:
+      type: object
+      properties:
+        id:
+          type: string
+          example: c1
+        name:
+          type: string
+          example: Lập trình Web
+        instructorId:
+          type: string
+          example: u2
+
+    Assignment:
+      type: object
+      properties:
+        id:
+          type: string
+          example: a_1234
+        courseId:
+          type: string
+          example: c1
+        title:
+          type: string
+          example: Bài tập 1
+        description:
+          type: string
+          example: Thiết kế REST API
+        dueAt:
+          type: number
+          example: 1793985150.0
+
+    Submission:
+      type: object
+      properties:
+        id:
+          type: string
+          example: s_5678
+        assignmentId:
+          type: string
+          example: a_1234
+        studentId:
+          type: string
+          example: u4
+        content:
+          type: string
+          example: Bài nộp của em
+        submittedAt:
+          type: number
+          example: 1793980000.0
+        fileName:
+          type: string
+          example: solution.py
+        grade:
+          type: number
+          example: 9.5
+        feedback:
+          type: string
+          example: Code sạch, xử lý tốt
+
+    Material:
+      type: object
+      properties:
+        id:
+          type: string
+          example: mat_1234
+        courseId:
+          type: string
+          example: c1
+        title:
+          type: string
+          example: Bài giảng 1
+        fileName:
+          type: string
+          example: slides.pdf
+        fileSize:
+          type: integer
+          example: 1048576
+
+    Quiz:
+      type: object
+      properties:
+        id:
+          type: string
+          example: qz_1234
+        courseId:
+          type: string
+          example: c1
+        title:
+          type: string
+          example: Kiểm tra trắc nghiệm 15 phút
+        description:
+          type: string
+          example: Kiến thức mạng máy tính
+        durationMinutes:
+          type: integer
+          example: 15
+        maxAttempts:
+          type: integer
+          example: 2
+
+paths:
+  /auth/login:
+    post:
+      summary: Đăng nhập
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                password:
+                  type: string
+                remember:
+                  type: boolean
+      responses:
+        '200':
+          description: Đăng nhập thành công, trả token JWT và cookie phiên
+        '401':
+          description: Sai thông tin đăng nhập hoặc tài khoản bị khoá
+
+  /auth/register:
+    post:
+      summary: Đăng ký tài khoản sinh viên
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, name, password]
+              properties:
+                email:
+                  type: string
+                name:
+                  type: string
+                password:
+                  type: string
+      responses:
+        '201':
+          description: Đăng ký thành công
+        '409':
+          description: Email đã được sử dụng
+
+  /auth/logout:
+    post:
+      security:
+        - bearerAuth: []
+      summary: Đăng xuất và vô hiệu token
+      responses:
+        '200':
+          description: Đăng xuất thành công
+
+  /users/me:
+    get:
+      security:
+        - bearerAuth: []
+      summary: Xem thông tin hồ sơ người dùng hiện tại
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+    put:
+      security:
+        - bearerAuth: []
+      summary: Cập nhật họ tên và giới thiệu cá nhân
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                fullName:
+                  type: string
+                bio:
+                  type: string
+      responses:
+        '200':
+          description: Cập nhật thành công
+
+  /users/me/avatar:
+    post:
+      security:
+        - bearerAuth: []
+      summary: Tải lên ảnh đại diện cá nhân
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                avatar:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Tải lên ảnh thành công
+
+  /users/{userId}/avatar:
+    get:
+      summary: Xem và tải ảnh đại diện của người dùng
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Trả về tệp ảnh
+        '404':
+          description: Không tìm thấy ảnh đại diện
+
+  /courses:
+    get:
+      security:
+        - bearerAuth: []
+      summary: Tra cứu danh sách môn học (hỗ trợ lọc theo tên và giảng viên)
+      parameters:
+        - name: q
+          in: query
+          schema:
+            type: string
+          description: Từ khoá tìm kiếm theo tên môn
+        - name: instructor
+          in: query
+          schema:
+            type: string
+          description: Lọc theo mã giảng viên
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Course'
+    post:
+      security:
+        - bearerAuth: []
+      summary: Khởi tạo môn học mới (ADMIN)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, instructorId]
+              properties:
+                name:
+                  type: string
+                instructorId:
+                  type: string
+      responses:
+        '201':
+          description: Khởi tạo thành công
+
+  /courses/{courseId}:
+    get:
+      security:
+        - bearerAuth: []
+      summary: Xem chi tiết môn học
+      parameters:
+        - name: courseId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Course'
+    patch:
+      security:
+        - bearerAuth: []
+      summary: Giảng viên phụ trách hoặc Admin cập nhật môn học
+      parameters:
+        - name: courseId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+      responses:
+        '200':
+          description: Cập nhật thành công
+    delete:
+      security:
+        - bearerAuth: []
+      summary: Quản trị viên gỡ bỏ môn học trên toàn hệ thống
+      parameters:
+        - name: courseId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Xoá môn học thành công
+
+  /courses/{courseId}/members:
+    get:
+      security:
+        - bearerAuth: []
+      summary: Xem hồ sơ công khai của các thành viên cùng khoá học
+      parameters:
+        - name: courseId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Danh sách thành viên trong lớp
+
+  /courses/{courseId}/materials:
+    get:
+      security:
+        - bearerAuth: []
+      summary: Xem danh sách tài liệu môn học
+      parameters:
+        - name: courseId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Danh sách tài liệu
+    post:
+      security:
+        - bearerAuth: []
+      summary: Giảng viên tải lên tài liệu bài giảng
+      parameters:
+        - name: courseId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [title, file]
+              properties:
+                title:
+                  type: string
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '201':
+          description: Tải lên tài liệu thành công
+
+  /materials/{materialId}/download:
+    get:
+      security:
+        - bearerAuth: []
+      summary: Tải tài liệu bài giảng
+      parameters:
+        - name: materialId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Tệp tin tài liệu
+
+  /courses/{courseId}/assignments:
+    get:
+      security:
+        - bearerAuth: []
+      summary: Danh sách bài tập
+      parameters:
+        - name: courseId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Danh sách bài tập
+    post:
+      security:
+        - bearerAuth: []
+      summary: Giảng viên tạo bài tập
+      parameters:
+        - name: courseId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, dueAt]
+              properties:
+                title:
+                  type: string
+                description:
+                  type: string
+                dueAt:
+                  type: number
+      responses:
+        '201':
+          description: Tạo bài tập thành công
+
+  /assignments/{assignmentId}/submissions:
+    get:
+      security:
+        - bearerAuth: []
+      summary: Xem bài nộp của bài tập
+      parameters:
+        - name: assignmentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Danh sách bài nộp
+    post:
+      security:
+        - bearerAuth: []
+      summary: Sinh viên nộp bài làm (văn bản hoặc tải tệp đính kèm)
+      parameters:
+        - name: assignmentId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content:
+                  type: string
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                content:
+                  type: string
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '201':
+          description: Nộp bài thành công
+
+  /submissions/{submissionId}/grade:
+    post:
+      security:
+        - bearerAuth: []
+      summary: Giảng viên chấm điểm và nhận xét cho bài nộp
+      parameters:
+        - name: submissionId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [grade]
+              properties:
+                grade:
+                  type: number
+                  minimum: 0
+                  maximum: 10
+                feedback:
+                  type: string
+      responses:
+        '200':
+          description: Chấm điểm thành công
+
+  /courses/{courseId}/quizzes:
+    get:
+      security:
+        - bearerAuth: []
+      summary: Danh sách bài kiểm tra trắc nghiệm
+      parameters:
+        - name: courseId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Danh sách bài trắc nghiệm
+    post:
+      security:
+        - bearerAuth: []
+      summary: Giảng viên thiết lập bài kiểm tra trắc nghiệm
+      parameters:
+        - name: courseId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, durationMinutes, questions]
+              properties:
+                title:
+                  type: string
+                description:
+                  type: string
+                durationMinutes:
+                  type: integer
+                maxAttempts:
+                  type: integer
+                questions:
+                  type: array
+                  items:
+                    type: object
+                    required: [question, options, correctOption]
+                    properties:
+                      question:
+                        type: string
+                      options:
+                        type: array
+                        items:
+                          type: string
+                      correctOption:
+                        type: integer
+                      points:
+                        type: number
+      responses:
+        '201':
+          description: Khởi tạo bài kiểm tra thành công
+
+  /quizzes/{quizId}/attempts:
+    post:
+      security:
+        - bearerAuth: []
+      summary: Sinh viên bắt đầu làm bài trắc nghiệm
+      parameters:
+        - name: quizId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '201':
+          description: Bắt đầu lượt làm bài
+
+  /quizzes/{quizId}/attempts/{attemptId}/submit:
+    post:
+      security:
+        - bearerAuth: []
+      summary: Sinh viên nộp bài trắc nghiệm (Máy chủ chấm điểm tự động)
+      parameters:
+        - name: quizId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: attemptId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [answers]
+              properties:
+                answers:
+                  type: object
+                  additionalProperties:
+                    type: integer
+      responses:
+        '200':
+          description: Trả về kết quả điểm số sau khi máy chủ tự động đối chiếu đáp án
+

@@ -150,11 +150,11 @@ def parse_password_change_body(body: Any) -> tuple[str, str]:
     return old_password, new_password
 
 
-PROFILE_FIELDS = frozenset({"fullName", "bio"})
+PROFILE_FIELDS = frozenset({"fullName", "bio", "phone"})
 
 
 def parse_profile_update_body(body: Any) -> dict[str, str]:
-    """Chỉ cho sửa fullName/bio; field khác (role, email, id...) là 400."""
+    """Chỉ cho sửa fullName/bio/phone; field khác (role, email, id...) là 400."""
     if not isinstance(body, dict) or not body or not set(body) <= PROFILE_FIELDS:
         raise ValidationError()
     updates: dict[str, str] = {}
@@ -168,6 +168,11 @@ def parse_profile_update_body(body: Any) -> dict[str, str]:
         if not isinstance(bio, str) or len(bio) > 500:
             raise ValidationError()
         updates["bio"] = bio
+    if "phone" in body:
+        phone = body["phone"]
+        if not isinstance(phone, str) or len(phone) > 30:
+            raise ValidationError()
+        updates["phone"] = phone
     return updates
 
 
@@ -187,6 +192,12 @@ def parse_course_body(body: Any) -> tuple[str, str]:
 
 
 def parse_course_request_body(body: Any) -> str:
+    if not isinstance(body, dict) or set(body) != {"name"}:
+        raise ValidationError()
+    return validate_course_name(body["name"])
+
+
+def parse_course_update_body(body: Any) -> str:
     if not isinstance(body, dict) or set(body) != {"name"}:
         raise ValidationError()
     return validate_course_name(body["name"])
@@ -272,6 +283,96 @@ def parse_comment_body(body: Any) -> str:
     if not isinstance(body, dict) or set(body) != {"body"}:
         raise ValidationError()
     return _parse_text(body["body"], 2000)
+
+
+def parse_grade_submission_body(body: Any) -> tuple[float, str]:
+    if (
+        not isinstance(body, dict)
+        or not {"grade"} <= set(body)
+        or not set(body) <= {"grade", "feedback"}
+    ):
+        raise ValidationError()
+    grade = float(validate_score(body["grade"]))
+    feedback = body.get("feedback", "")
+    if not isinstance(feedback, str) or len(feedback) > 2000:
+        raise ValidationError()
+    return grade, feedback
+
+
+def parse_quiz_body(body: Any) -> tuple[str, str, int, int, list[dict[str, Any]]]:
+    if (
+        not isinstance(body, dict)
+        or not {"title", "durationMinutes", "questions"} <= set(body)
+        or not set(body) <= {"title", "description", "durationMinutes", "maxAttempts", "questions"}
+    ):
+        raise ValidationError()
+
+    title = _parse_text(body["title"], 200)
+    description = body.get("description", "")
+    if not isinstance(description, str) or len(description) > 2000:
+        raise ValidationError()
+
+    duration = body["durationMinutes"]
+    if isinstance(duration, bool) or not isinstance(duration, int) or duration <= 0 or duration > 300:
+        raise ValidationError()
+
+    max_attempts = body.get("maxAttempts", 1)
+    if (
+        isinstance(max_attempts, bool)
+        or not isinstance(max_attempts, int)
+        or max_attempts <= 0
+        or max_attempts > 100
+    ):
+        raise ValidationError()
+
+    raw_questions = body["questions"]
+    if not isinstance(raw_questions, list) or len(raw_questions) == 0 or len(raw_questions) > 100:
+        raise ValidationError()
+
+    questions = []
+    for q in raw_questions:
+        if (
+            not isinstance(q, dict)
+            or not {"question", "options", "correctOption"} <= set(q)
+            or not set(q) <= {"question", "options", "correctOption", "points"}
+        ):
+            raise ValidationError()
+        q_text = _parse_text(q["question"], 1000)
+        options = q["options"]
+        if not isinstance(options, list) or len(options) < 2 or len(options) > 10:
+            raise ValidationError()
+        clean_options = []
+        for opt in options:
+            if not isinstance(opt, str) or not opt.strip() or len(opt) > 500:
+                raise ValidationError()
+            clean_options.append(opt.strip())
+        correct = q["correctOption"]
+        if isinstance(correct, bool) or not isinstance(correct, int) or not (0 <= correct < len(clean_options)):
+            raise ValidationError()
+        points = float(q.get("points", 1.0))
+        if points <= 0:
+            raise ValidationError()
+        questions.append(
+            {
+                "question": q_text,
+                "options": clean_options,
+                "correctOption": correct,
+                "points": points,
+            }
+        )
+
+    return title, description, duration, max_attempts, questions
+
+
+def parse_quiz_submit_body(body: Any) -> dict[str, int]:
+    if not isinstance(body, dict) or set(body) != {"answers"} or not isinstance(body["answers"], dict):
+        raise ValidationError()
+    answers = {}
+    for q_id, opt in body["answers"].items():
+        if not isinstance(q_id, str) or isinstance(opt, bool) or not isinstance(opt, int) or opt < 0:
+            raise ValidationError()
+        answers[q_id] = opt
+    return answers
 
 
 def parse_grade_v2_body(body: Any) -> tuple[int | float, int]:

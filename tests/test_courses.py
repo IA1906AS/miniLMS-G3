@@ -49,6 +49,10 @@ def delete(client, token, path):
     return client.delete(path, headers=auth(token))
 
 
+def patch(client, token, path, body=None):
+    return client.patch(path, json=body, headers=auth(token))
+
+
 # --- POST /courses (ADMIN) ------------------------------------------------
 
 
@@ -272,3 +276,86 @@ def test_course_service_request_directly_is_allowed_for_instructor(app):
     with using_store(app.extensions["lms_store"]):
         request = course_service.request_course(an, "Môn tự tạo")
     assert request["status"] == "PENDING"
+
+
+def test_search_and_filter_courses(client):
+    admin = login(client, "admin@lms.test")
+    # c1: "Lập trình mạng", instructor: "u2"
+    # c2: "Cơ sở dữ liệu", instructor: "u3"
+    all_courses = get(client, admin, "/courses").get_json()
+    assert len(all_courses) == 2
+
+    # Query search by q
+    res_q = get(client, admin, "/courses?q=Web").get_json()
+    assert len(res_q) == 1
+    assert res_q[0]["id"] == "c1"
+
+    # Query filter by instructor
+    res_inst = get(client, admin, "/courses?instructor=u3").get_json()
+    assert len(res_inst) == 1
+    assert res_inst[0]["id"] == "c2"
+
+
+def test_update_course(client):
+    admin = login(client, "admin@lms.test")
+    an = login(client, "an.gv@lms.test")  # instructor of c1
+    chi = login(client, "chi.sv@lms.test")  # student
+
+    # Instructor updates their own course
+    res = patch(client, an, "/courses/c1", {"name": "Lập trình mạng nâng cao"})
+    assert res.status_code == 200
+    assert res.get_json()["name"] == "Lập trình mạng nâng cao"
+
+    # Instructor cannot update other instructor's course
+    assert patch(client, an, "/courses/c2", {"name": "Hacked"}).status_code == 403
+
+    # Student cannot update course
+    assert patch(client, chi, "/courses/c1", {"name": "Hacked"}).status_code == 403
+
+    # Admin can update any course
+    res_admin = patch(client, admin, "/courses/c1", {"name": "Lập trình mạng 2026"})
+    assert res_admin.status_code == 200
+    assert res_admin.get_json()["name"] == "Lập trình mạng 2026"
+
+    # Invalid name
+    assert patch(client, an, "/courses/c1", {"name": ""}).status_code == 400
+
+
+def test_delete_course(client):
+    admin = login(client, "admin@lms.test")
+    an = login(client, "an.gv@lms.test")
+
+    # Non-admin cannot delete
+    assert delete(client, an, "/courses/c2").status_code == 403
+
+    # Admin deletes course
+    res = delete(client, admin, "/courses/c2")
+    assert res.status_code == 200
+    assert res.get_json()["deleted"] is True
+
+    # Deleted course is 404
+    assert get(client, admin, "/courses/c2").status_code == 404
+    assert delete(client, admin, "/courses/c2").status_code == 404
+
+
+def test_course_members(client):
+    admin = login(client, "admin@lms.test")
+    an = login(client, "an.gv@lms.test")  # instructor of c1
+    chi = login(client, "chi.sv@lms.test")  # enrolled in c1
+    em = login(client, "em.sv@lms.test")  # not enrolled in c1
+
+    # Student enrolled can view members
+    res_chi = get(client, chi, "/courses/c1/members")
+    assert res_chi.status_code == 200
+    members = res_chi.get_json()
+    member_ids = {m["id"] for m in members}
+    assert "u2" in member_ids  # instructor
+    assert "u4" in member_ids  # student chi
+
+    # Student not enrolled cannot view members
+    assert get(client, em, "/courses/c1/members").status_code == 403
+
+    # Instructor of course can view members
+    assert get(client, an, "/courses/c1/members").status_code == 200
+    # Admin can view members
+    assert get(client, admin, "/courses/c1/members").status_code == 200

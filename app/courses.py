@@ -15,7 +15,31 @@ bp = Blueprint("courses", __name__)
 @require_role("ADMIN", "INSTRUCTOR", "STUDENT")
 @store_scope
 def list_courses() -> Any:
-    return jsonify(course_service.list_courses(g.actor))
+    q = request.args.get("q")
+    instructor = request.args.get("instructor")
+    return jsonify(course_service.list_courses(g.actor, q=q, instructor_id=instructor))
+
+
+@bp.patch("/courses/<course_id>")
+@require_role("ADMIN", "INSTRUCTOR")
+@store_scope
+def update_course(course_id: str) -> Any:
+    name = schemas.parse_course_update_body(request.get_json(silent=True))
+    return jsonify(course_service.update_course(g.actor, course_id, name))
+
+
+@bp.delete("/courses/<course_id>")
+@require_role("ADMIN")
+@store_scope
+def delete_course(course_id: str) -> Any:
+    return jsonify(course_service.delete_course(g.actor, course_id))
+
+
+@bp.get("/courses/<course_id>/members")
+@require_role("ADMIN", "INSTRUCTOR", "STUDENT")
+@store_scope
+def list_members(course_id: str) -> Any:
+    return jsonify(course_service.list_course_members(g.actor, course_id))
 
 
 @bp.post("/courses")

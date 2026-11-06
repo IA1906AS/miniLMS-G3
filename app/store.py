@@ -28,6 +28,7 @@ def init(
             email TEXT NOT NULL UNIQUE COLLATE NOCASE,
             name TEXT NOT NULL DEFAULT '',
             bio TEXT NOT NULL DEFAULT '',
+            phone TEXT NOT NULL DEFAULT '',
             locked INTEGER NOT NULL DEFAULT 0,
             role TEXT NOT NULL,
             pw_hash BLOB NOT NULL
@@ -120,16 +121,71 @@ def init(
             created_by TEXT NOT NULL,
             created_at REAL NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS materials (
+            id TEXT PRIMARY KEY,
+            course_id TEXT NOT NULL REFERENCES courses(id),
+            title TEXT NOT NULL,
+            file_name TEXT NOT NULL,
+            file_path TEXT NOT NULL,
+            file_size INTEGER NOT NULL,
+            created_by TEXT NOT NULL,
+            created_at REAL NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS quizzes (
+            id TEXT PRIMARY KEY,
+            course_id TEXT NOT NULL REFERENCES courses(id),
+            title TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            duration_minutes INTEGER NOT NULL,
+            max_attempts INTEGER NOT NULL DEFAULT 1,
+            created_by TEXT NOT NULL,
+            created_at REAL NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS quiz_questions (
+            id TEXT PRIMARY KEY,
+            quiz_id TEXT NOT NULL REFERENCES quizzes(id),
+            question_text TEXT NOT NULL,
+            options TEXT NOT NULL,
+            correct_option INTEGER NOT NULL,
+            points REAL NOT NULL DEFAULT 1.0
+        );
+        CREATE TABLE IF NOT EXISTS quiz_attempts (
+            id TEXT PRIMARY KEY,
+            quiz_id TEXT NOT NULL REFERENCES quizzes(id),
+            student_id TEXT NOT NULL REFERENCES users(id),
+            attempt_number INTEGER NOT NULL,
+            started_at REAL NOT NULL,
+            submitted_at REAL,
+            score REAL,
+            answers TEXT
+        );
         """
     )
     columns = {row[1] for row in connection.execute("PRAGMA table_info(users)")}
     if "bio" not in columns:  # DB cũ tạo trước khi có cột bio
         connection.execute("ALTER TABLE users ADD COLUMN bio TEXT NOT NULL DEFAULT ''")
+    if "phone" not in columns:  # DB cũ tạo trước khi có cột phone
+        connection.execute("ALTER TABLE users ADD COLUMN phone TEXT NOT NULL DEFAULT ''")
     if "locked" not in columns:  # DB cũ tạo trước khi có cờ khoá
         connection.execute("ALTER TABLE users ADD COLUMN locked INTEGER NOT NULL DEFAULT 0")
+    if "avatar_path" not in columns:
+        connection.execute("ALTER TABLE users ADD COLUMN avatar_path TEXT NOT NULL DEFAULT ''")
     enrollment_columns = {row[1] for row in connection.execute("PRAGMA table_info(enrollments)")}
     if "version" not in enrollment_columns:  # DB cũ tạo trước khi có optimistic locking
         connection.execute("ALTER TABLE enrollments ADD COLUMN version INTEGER NOT NULL DEFAULT 0")
+    sub_cols = {row[1] for row in connection.execute("PRAGMA table_info(submissions)")}
+    if "file_name" not in sub_cols:
+        connection.execute("ALTER TABLE submissions ADD COLUMN file_name TEXT NOT NULL DEFAULT ''")
+    if "file_path" not in sub_cols:
+        connection.execute("ALTER TABLE submissions ADD COLUMN file_path TEXT NOT NULL DEFAULT ''")
+    if "grade" not in sub_cols:
+        connection.execute("ALTER TABLE submissions ADD COLUMN grade REAL")
+    if "feedback" not in sub_cols:
+        connection.execute("ALTER TABLE submissions ADD COLUMN feedback TEXT NOT NULL DEFAULT ''")
+    if "graded_by" not in sub_cols:
+        connection.execute("ALTER TABLE submissions ADD COLUMN graded_by TEXT")
+    if "graded_at" not in sub_cols:
+        connection.execute("ALTER TABLE submissions ADD COLUMN graded_at REAL")
     seed = json.loads((pathlib.Path(__file__).parent / "seed.json").read_text(encoding="utf-8"))
     with connection:
         for user_data in seed["users"]:
@@ -186,6 +242,8 @@ def init(
         for row in connection.execute("SELECT course_id, student_id, score FROM enrollments")
     }
     bios = {row[0]: row[1] for row in connection.execute("SELECT id, bio FROM users")}
+    phones = {row[0]: row[1] for row in connection.execute("SELECT id, phone FROM users")}
+    avatars = {row[0]: row[1] for row in connection.execute("SELECT id, avatar_path FROM users")}
     locked = {row[0]: bool(row[1]) for row in connection.execute("SELECT id, locked FROM users")}
     db = {
         "users": users,
@@ -193,6 +251,8 @@ def init(
         "courses": courses,
         "enrollments": enrollments,
         "bios": bios,
+        "phones": phones,
+        "avatars": avatars,
         "locked": locked,
         "attempts": {},
         "tokens_valid_after": {},
@@ -241,6 +301,18 @@ def refresh(state: dict[str, Any]) -> None:
         state["bios"].clear()
         state["bios"].update(
             {row[0]: row[1] for row in connection.execute("SELECT id, bio FROM users")}
+        )
+        if "phones" not in state:
+            state["phones"] = {}
+        state["phones"].clear()
+        state["phones"].update(
+            {row[0]: row[1] for row in connection.execute("SELECT id, phone FROM users")}
+        )
+        if "avatars" not in state:
+            state["avatars"] = {}
+        state["avatars"].clear()
+        state["avatars"].update(
+            {row[0]: row[1] for row in connection.execute("SELECT id, avatar_path FROM users")}
         )
         state["locked"].clear()
         state["locked"].update(
@@ -780,6 +852,7 @@ def set_user_profile(
     *,
     name: str | None = None,
     bio: str | None = None,
+    phone: str | None = None,
 ) -> None:
     assignments: list[str] = []
     params: list[Any] = []
@@ -789,6 +862,9 @@ def set_user_profile(
     if bio is not None:
         assignments.append("bio = ?")
         params.append(bio)
+    if phone is not None:
+        assignments.append("phone = ?")
+        params.append(phone)
     if not assignments:
         return
     params.append(user_id)
@@ -807,6 +883,8 @@ def set_user_profile(
             user["name"] = name
         if bio is not None:
             state["bios"][user_id] = bio
+        if phone is not None:
+            state.setdefault("phones", {})[user_id] = phone
 
 
 def update_password_hash(state: dict[str, Any], user_id: str, password_hash: bytes) -> None:
@@ -857,6 +935,83 @@ def create_course(state: dict[str, Any], *, name: str, instructor_id: str) -> di
             raise
         state["courses"][course["id"]] = course
     return course
+
+
+def update_course(state: dict[str, Any], course_id: str, name: str) -> dict[str, Any] | None:
+    with state["lock"]:
+        connection = state["connection"]
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            cursor = connection.execute(
+                "UPDATE courses SET name = ? WHERE id = ?", (name, course_id)
+            )
+            if cursor.rowcount == 0:
+                connection.execute("ROLLBACK")
+                return None
+            connection.execute("COMMIT")
+        except sqlite3.Error:
+            connection.execute("ROLLBACK")
+            raise
+        if course_id in state["courses"]:
+            state["courses"][course_id]["name"] = name
+        return state["courses"].get(course_id)
+
+
+def delete_course(state: dict[str, Any], course_id: str) -> bool:
+    with state["lock"]:
+        connection = state["connection"]
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            connection.execute(
+                "DELETE FROM comments WHERE thread_id IN (SELECT id FROM threads WHERE course_id = ?)",
+                (course_id,),
+            )
+            connection.execute("DELETE FROM threads WHERE course_id = ?", (course_id,))
+            connection.execute(
+                "DELETE FROM submissions WHERE assignment_id IN (SELECT id FROM assignments WHERE course_id = ?)",
+                (course_id,),
+            )
+            connection.execute("DELETE FROM assignments WHERE course_id = ?", (course_id,))
+            connection.execute("DELETE FROM announcements WHERE course_id = ?", (course_id,))
+            connection.execute("DELETE FROM enrollments WHERE course_id = ?", (course_id,))
+            cursor = connection.execute("DELETE FROM courses WHERE id = ?", (course_id,))
+            if cursor.rowcount == 0:
+                connection.execute("ROLLBACK")
+                return False
+            connection.execute("COMMIT")
+        except sqlite3.Error:
+            connection.execute("ROLLBACK")
+            raise
+        state["courses"].pop(course_id, None)
+        to_delete = [key for key in state["enrollments"] if key[0] == course_id]
+        for key in to_delete:
+            state["enrollments"].pop(key, None)
+        return True
+
+
+def list_course_members(state: dict[str, Any], course_id: str) -> list[dict[str, Any]]:
+    with state["lock"]:
+        course = state["courses"].get(course_id)
+        if course is None:
+            return []
+        instructor_id = course["instructorId"]
+        student_ids = [sid for (cid, sid) in state["enrollments"].keys() if cid == course_id]
+        all_ids = [instructor_id] + [sid for sid in student_ids if sid != instructor_id]
+        members = []
+        for uid in all_ids:
+            u = state["users"].get(uid)
+            if u:
+                members.append(
+                    {
+                        "id": u["id"],
+                        "email": u["email"],
+                        "name": u.get("name", ""),
+                        "role": u["role"],
+                        "bio": state.get("bios", {}).get(uid, ""),
+                        "phone": state.get("phones", {}).get(uid, ""),
+                    }
+                )
+        return members
 
 
 def create_course_request(
@@ -1009,13 +1164,26 @@ def _assignment_view(row: tuple[Any, ...]) -> dict[str, Any]:
 
 
 def _submission_view(row: tuple[Any, ...]) -> dict[str, Any]:
-    return {
+    view: dict[str, Any] = {
         "id": row[0],
         "assignmentId": row[1],
         "studentId": row[2],
         "content": row[3],
         "submittedAt": row[4],
     }
+    if len(row) > 5 and row[5]:
+        view["fileName"] = row[5]
+    if len(row) > 6 and row[6]:
+        view["filePath"] = row[6]
+    if len(row) > 7 and row[7] is not None:
+        view["grade"] = row[7]
+    if len(row) > 8 and row[8]:
+        view["feedback"] = row[8]
+    if len(row) > 9 and row[9]:
+        view["gradedBy"] = row[9]
+    if len(row) > 10 and row[10] is not None:
+        view["gradedAt"] = row[10]
+    return view
 
 
 def create_assignment(
@@ -1103,6 +1271,8 @@ def create_submission(
     student_id: str,
     content: str,
     now: float,
+    file_name: str = "",
+    file_path: str = "",
 ) -> tuple[str, dict[str, Any] | None]:
     """Trả ('created'|'unchanged'|'conflict', submission)."""
     with state["lock"]:
@@ -1111,29 +1281,34 @@ def create_submission(
         try:
             row = connection.execute(
                 """
-                SELECT id, assignment_id, student_id, content, submitted_at
+                SELECT id, assignment_id, student_id, content, submitted_at,
+                       file_name, file_path, grade, feedback, graded_by, graded_at
                   FROM submissions WHERE assignment_id = ? AND student_id = ?
                 """,
                 (assignment_id, student_id),
             ).fetchone()
             if row is not None:
                 connection.execute("COMMIT")
-                if row[3] == content:
+                if row[3] == content and (not file_name or row[5] == file_name):
                     return "unchanged", _submission_view(row)
                 return "conflict", None
 
-            submission = {
+            submission: dict[str, Any] = {
                 "id": "s_" + uuid.uuid4().hex,
                 "assignmentId": assignment_id,
                 "studentId": student_id,
                 "content": content,
                 "submittedAt": now,
             }
+            if file_name:
+                submission["fileName"] = file_name
+            if file_path:
+                submission["filePath"] = file_path
             connection.execute(
                 """
                 INSERT INTO submissions
-                    (id, assignment_id, student_id, content, submitted_at)
-                VALUES (?, ?, ?, ?, ?)
+                    (id, assignment_id, student_id, content, submitted_at, file_name, file_path)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     submission["id"],
@@ -1141,6 +1316,8 @@ def create_submission(
                     student_id,
                     content,
                     now,
+                    file_name,
+                    file_path,
                 ),
             )
             connection.execute("COMMIT")
@@ -1158,7 +1335,8 @@ def get_submission(
             state["connection"]
             .execute(
                 """
-            SELECT id, assignment_id, student_id, content, submitted_at
+            SELECT id, assignment_id, student_id, content, submitted_at,
+                   file_name, file_path, grade, feedback, graded_by, graded_at
               FROM submissions WHERE assignment_id = ? AND student_id = ?
             """,
                 (assignment_id, student_id),
@@ -1174,7 +1352,8 @@ def list_submissions(state: dict[str, Any], assignment_id: str) -> list[dict[str
             state["connection"]
             .execute(
                 """
-            SELECT id, assignment_id, student_id, content, submitted_at
+            SELECT id, assignment_id, student_id, content, submitted_at,
+                   file_name, file_path, grade, feedback, graded_by, graded_at
               FROM submissions WHERE assignment_id = ? ORDER BY submitted_at
             """,
                 (assignment_id,),
@@ -1190,7 +1369,8 @@ def list_student_submissions(state: dict[str, Any], student_id: str) -> list[dic
             state["connection"]
             .execute(
                 """
-            SELECT id, assignment_id, student_id, content, submitted_at
+            SELECT id, assignment_id, student_id, content, submitted_at,
+                   file_name, file_path, grade, feedback, graded_by, graded_at
               FROM submissions WHERE student_id = ? ORDER BY submitted_at
             """,
                 (student_id,),
@@ -1198,6 +1378,62 @@ def list_student_submissions(state: dict[str, Any], student_id: str) -> list[dic
             .fetchall()
         )
     return [_submission_view(row) for row in rows]
+
+
+def get_submission_by_id(state: dict[str, Any], submission_id: str) -> dict[str, Any] | None:
+    with state["lock"]:
+        row = (
+            state["connection"]
+            .execute(
+                """
+            SELECT id, assignment_id, student_id, content, submitted_at,
+                   file_name, file_path, grade, feedback, graded_by, graded_at
+              FROM submissions WHERE id = ?
+            """,
+                (submission_id,),
+            )
+            .fetchone()
+        )
+    return _submission_view(row) if row is not None else None
+
+
+def grade_submission(
+    state: dict[str, Any],
+    *,
+    submission_id: str,
+    grade: float,
+    feedback: str,
+    graded_by: str,
+    now: float,
+) -> dict[str, Any] | None:
+    with state["lock"]:
+        connection = state["connection"]
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            cursor = connection.execute(
+                """
+                UPDATE submissions
+                   SET grade = ?, feedback = ?, graded_by = ?, graded_at = ?
+                 WHERE id = ?
+                """,
+                (grade, feedback, graded_by, now, submission_id),
+            )
+            if cursor.rowcount == 0:
+                connection.execute("ROLLBACK")
+                return None
+            row = connection.execute(
+                """
+                SELECT id, assignment_id, student_id, content, submitted_at,
+                       file_name, file_path, grade, feedback, graded_by, graded_at
+                  FROM submissions WHERE id = ?
+                """,
+                (submission_id,),
+            ).fetchone()
+            connection.execute("COMMIT")
+        except sqlite3.Error:
+            connection.execute("ROLLBACK")
+            raise
+        return _submission_view(row) if row is not None else None
 
 
 def _announcement_view(row: tuple[Any, ...]) -> dict[str, Any]:
@@ -1268,6 +1504,38 @@ def create_announcement(
                     now,
                 ),
             )
+            # Sinh outbox events gửi email thông báo tới toàn bộ sinh viên đã ghi danh
+            students = connection.execute(
+                """
+                SELECT u.email, u.name
+                  FROM enrollments e
+                  JOIN users u ON e.student_id = u.id
+                 WHERE e.course_id = ?
+                """,
+                (course_id,),
+            ).fetchall()
+            for student in students:
+                event_id = secrets.token_urlsafe(16)
+                student_name = student[1] or "bạn"
+                payload = json.dumps(
+                    {
+                        "to": student[0],
+                        "subject": f"Thông báo mới: {title}",
+                        "body": f"Chào {student_name},\n\nThông báo từ khoá học:\n\n{body}\n",
+                        "courseId": course_id,
+                    },
+                    ensure_ascii=False,
+                )
+                connection.execute(
+                    """
+                    INSERT INTO outbox_events (
+                        event_id, type, payload, status, attempts,
+                        next_attempt_at, created_at
+                    )
+                    VALUES (?, 'announcement.posted', ?, 'PENDING', 0, ?, ?)
+                    """,
+                    (event_id, payload, now, now),
+                )
             connection.execute("COMMIT")
         except sqlite3.Error:
             connection.execute("ROLLBACK")
@@ -1460,3 +1728,489 @@ def delete_comment(state: dict[str, Any], comment_id: str) -> bool:
     with state["lock"]:
         cursor = state["connection"].execute("DELETE FROM comments WHERE id = ?", (comment_id,))
         return cursor.rowcount > 0
+
+
+# --- Materials & Storage --------------------------------------------------
+
+
+def _material_view(row: tuple[Any, ...]) -> dict[str, Any]:
+    return {
+        "id": row[0],
+        "courseId": row[1],
+        "title": row[2],
+        "fileName": row[3],
+        "filePath": row[4],
+        "fileSize": row[5],
+        "createdBy": row[6],
+        "createdAt": row[7],
+    }
+
+
+def create_material(
+    state: dict[str, Any],
+    *,
+    course_id: str,
+    title: str,
+    file_name: str,
+    file_path: str,
+    file_size: int,
+    created_by: str,
+    now: float,
+) -> dict[str, Any]:
+    material = {
+        "id": "mat_" + uuid.uuid4().hex,
+        "courseId": course_id,
+        "title": title,
+        "fileName": file_name,
+        "filePath": file_path,
+        "fileSize": file_size,
+        "createdBy": created_by,
+        "createdAt": now,
+    }
+    with state["lock"]:
+        connection = state["connection"]
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            connection.execute(
+                """
+                INSERT INTO materials
+                    (id, course_id, title, file_name, file_path, file_size, created_by, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    material["id"],
+                    course_id,
+                    title,
+                    file_name,
+                    file_path,
+                    file_size,
+                    created_by,
+                    now,
+                ),
+            )
+            connection.execute("COMMIT")
+        except sqlite3.Error:
+            connection.execute("ROLLBACK")
+            raise
+    return material
+
+
+def list_materials(state: dict[str, Any], course_id: str) -> list[dict[str, Any]]:
+    with state["lock"]:
+        rows = (
+            state["connection"]
+            .execute(
+                """
+            SELECT id, course_id, title, file_name, file_path, file_size, created_by, created_at
+              FROM materials WHERE course_id = ? ORDER BY created_at
+            """,
+                (course_id,),
+            )
+            .fetchall()
+        )
+    return [_material_view(row) for row in rows]
+
+
+def get_material(state: dict[str, Any], material_id: str) -> dict[str, Any] | None:
+    with state["lock"]:
+        row = (
+            state["connection"]
+            .execute(
+                """
+            SELECT id, course_id, title, file_name, file_path, file_size, created_by, created_at
+              FROM materials WHERE id = ?
+            """,
+                (material_id,),
+            )
+            .fetchone()
+        )
+    return _material_view(row) if row is not None else None
+
+
+def delete_material(state: dict[str, Any], material_id: str) -> dict[str, Any] | None:
+    with state["lock"]:
+        connection = state["connection"]
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            row = connection.execute(
+                """
+                SELECT id, course_id, title, file_name, file_path, file_size, created_by, created_at
+                  FROM materials WHERE id = ?
+                """,
+                (material_id,),
+            ).fetchone()
+            if row is None:
+                connection.execute("ROLLBACK")
+                return None
+            connection.execute("DELETE FROM materials WHERE id = ?", (material_id,))
+            connection.execute("COMMIT")
+        except sqlite3.Error:
+            connection.execute("ROLLBACK")
+            raise
+    return _material_view(row)
+
+
+def set_user_avatar(state: dict[str, Any], user_id: str, avatar_path: str) -> None:
+    with state["lock"]:
+        connection = state["connection"]
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            connection.execute("UPDATE users SET avatar_path = ? WHERE id = ?", (avatar_path, user_id))
+            connection.execute("COMMIT")
+        except sqlite3.Error:
+            connection.execute("ROLLBACK")
+            raise
+        state.setdefault("avatars", {})[user_id] = avatar_path
+
+
+def get_user_avatar(state: dict[str, Any], user_id: str) -> str:
+    with state["lock"]:
+        return state.get("avatars", {}).get(user_id, "")
+
+
+# --- Quizzes & Automatic Grading ------------------------------------------
+
+
+def _quiz_view(row: tuple[Any, ...]) -> dict[str, Any]:
+    return {
+        "id": row[0],
+        "courseId": row[1],
+        "title": row[2],
+        "description": row[3],
+        "durationMinutes": row[4],
+        "maxAttempts": row[5],
+        "createdBy": row[6],
+        "createdAt": row[7],
+    }
+
+
+def create_quiz(
+    state: dict[str, Any],
+    *,
+    course_id: str,
+    title: str,
+    description: str,
+    duration_minutes: int,
+    max_attempts: int,
+    questions: list[dict[str, Any]],
+    created_by: str,
+    now: float,
+) -> dict[str, Any]:
+    quiz_id = "qz_" + uuid.uuid4().hex
+    with state["lock"]:
+        connection = state["connection"]
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            connection.execute(
+                """
+                INSERT INTO quizzes
+                    (id, course_id, title, description, duration_minutes, max_attempts, created_by, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    quiz_id,
+                    course_id,
+                    title,
+                    description,
+                    duration_minutes,
+                    max_attempts,
+                    created_by,
+                    now,
+                ),
+            )
+            for q in questions:
+                q_id = "qq_" + uuid.uuid4().hex
+                connection.execute(
+                    """
+                    INSERT INTO quiz_questions
+                        (id, quiz_id, question_text, options, correct_option, points)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        q_id,
+                        quiz_id,
+                        q["question"],
+                        json.dumps(q["options"], ensure_ascii=False),
+                        int(q["correctOption"]),
+                        float(q.get("points", 1.0)),
+                    ),
+                )
+            connection.execute("COMMIT")
+        except sqlite3.Error:
+            connection.execute("ROLLBACK")
+            raise
+    return get_quiz(state, quiz_id, include_answers=True) or {}
+
+
+def list_quizzes(state: dict[str, Any], course_id: str) -> list[dict[str, Any]]:
+    with state["lock"]:
+        rows = (
+            state["connection"]
+            .execute(
+                """
+            SELECT id, course_id, title, description, duration_minutes, max_attempts, created_by, created_at
+              FROM quizzes WHERE course_id = ? ORDER BY created_at
+            """,
+                (course_id,),
+            )
+            .fetchall()
+        )
+    return [_quiz_view(row) for row in rows]
+
+
+def get_quiz(
+    state: dict[str, Any], quiz_id: str, *, include_answers: bool = False
+) -> dict[str, Any] | None:
+    with state["lock"]:
+        row = (
+            state["connection"]
+            .execute(
+                """
+            SELECT id, course_id, title, description, duration_minutes, max_attempts, created_by, created_at
+              FROM quizzes WHERE id = ?
+            """,
+                (quiz_id,),
+            )
+            .fetchone()
+        )
+        if row is None:
+            return None
+        quiz = _quiz_view(row)
+        q_rows = (
+            state["connection"]
+            .execute(
+                """
+            SELECT id, question_text, options, correct_option, points
+              FROM quiz_questions WHERE quiz_id = ? ORDER BY rowid
+            """,
+                (quiz_id,),
+            )
+            .fetchall()
+        )
+        questions = []
+        for qr in q_rows:
+            q_data: dict[str, Any] = {
+                "id": qr[0],
+                "question": qr[1],
+                "options": json.loads(qr[2]),
+                "points": qr[4],
+            }
+            if include_answers:
+                q_data["correctOption"] = qr[3]
+            questions.append(q_data)
+        quiz["questions"] = questions
+        return quiz
+
+
+def delete_quiz(state: dict[str, Any], quiz_id: str) -> bool:
+    with state["lock"]:
+        connection = state["connection"]
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            connection.execute("DELETE FROM quiz_attempts WHERE quiz_id = ?", (quiz_id,))
+            connection.execute("DELETE FROM quiz_questions WHERE quiz_id = ?", (quiz_id,))
+            cursor = connection.execute("DELETE FROM quizzes WHERE id = ?", (quiz_id,))
+            if cursor.rowcount == 0:
+                connection.execute("ROLLBACK")
+                return False
+            connection.execute("COMMIT")
+        except sqlite3.Error:
+            connection.execute("ROLLBACK")
+            raise
+        return True
+
+
+def create_quiz_attempt(
+    state: dict[str, Any], *, quiz_id: str, student_id: str, now: float
+) -> dict[str, Any]:
+    with state["lock"]:
+        connection = state["connection"]
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            quiz_row = connection.execute(
+                "SELECT max_attempts, duration_minutes FROM quizzes WHERE id = ?", (quiz_id,)
+            ).fetchone()
+            if quiz_row is None:
+                connection.execute("ROLLBACK")
+                raise ValueError("Quiz not found")
+            max_attempts, duration_minutes = quiz_row[0], quiz_row[1]
+
+            # Kiểm tra attempt dở dang
+            active = connection.execute(
+                """
+                SELECT id, started_at FROM quiz_attempts
+                 WHERE quiz_id = ? AND student_id = ? AND submitted_at IS NULL
+                """,
+                (quiz_id, student_id),
+            ).fetchone()
+            if active is not None:
+                connection.execute("COMMIT")
+                return {
+                    "id": active[0],
+                    "quizId": quiz_id,
+                    "studentId": student_id,
+                    "startedAt": active[1],
+                    "durationMinutes": duration_minutes,
+                }
+
+            count = connection.execute(
+                "SELECT COUNT(*) FROM quiz_attempts WHERE quiz_id = ? AND student_id = ?",
+                (quiz_id, student_id),
+            ).fetchone()[0]
+            if count >= max_attempts:
+                connection.execute("ROLLBACK")
+                raise ValueError("Max attempts reached")
+
+            attempt_id = "qa_" + uuid.uuid4().hex
+            connection.execute(
+                """
+                INSERT INTO quiz_attempts
+                    (id, quiz_id, student_id, attempt_number, started_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (attempt_id, quiz_id, student_id, count + 1, now),
+            )
+            connection.execute("COMMIT")
+        except (sqlite3.Error, ValueError):
+            if connection.in_transaction:
+                connection.execute("ROLLBACK")
+            raise
+    return {
+        "id": attempt_id,
+        "quizId": quiz_id,
+        "studentId": student_id,
+        "attemptNumber": count + 1,
+        "startedAt": now,
+        "durationMinutes": duration_minutes,
+    }
+
+
+def get_quiz_attempt(state: dict[str, Any], attempt_id: str) -> dict[str, Any] | None:
+    with state["lock"]:
+        row = (
+            state["connection"]
+            .execute(
+                """
+            SELECT id, quiz_id, student_id, attempt_number, started_at, submitted_at, score, answers
+              FROM quiz_attempts WHERE id = ?
+            """,
+                (attempt_id,),
+            )
+            .fetchone()
+        )
+        if row is None:
+            return None
+        return {
+            "id": row[0],
+            "quizId": row[1],
+            "studentId": row[2],
+            "attemptNumber": row[3],
+            "startedAt": row[4],
+            "submittedAt": row[5],
+            "score": row[6],
+            "answers": json.loads(row[7]) if row[7] else {},
+        }
+
+
+def submit_quiz_attempt(
+    state: dict[str, Any], *, attempt_id: str, answers: dict[str, int], now: float
+) -> dict[str, Any]:
+    """Đối chiếu đáp án và tự động chấm điểm hoàn toàn trên server."""
+    with state["lock"]:
+        connection = state["connection"]
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            attempt_row = connection.execute(
+                """
+                SELECT id, quiz_id, student_id, started_at, submitted_at
+                  FROM quiz_attempts WHERE id = ?
+                """,
+                (attempt_id,),
+            ).fetchone()
+            if attempt_row is None:
+                connection.execute("ROLLBACK")
+                raise ValueError("Attempt not found")
+            if attempt_row[4] is not None:
+                connection.execute("ROLLBACK")
+                raise ValueError("Already submitted")
+
+            quiz_id = attempt_row[1]
+            questions = connection.execute(
+                "SELECT id, correct_option, points FROM quiz_questions WHERE quiz_id = ?",
+                (quiz_id,),
+            ).fetchall()
+
+            total_points = 0.0
+            earned_points = 0.0
+            for q_id, correct_opt, pts in questions:
+                total_points += float(pts)
+                chosen = answers.get(q_id)
+                if chosen is not None and int(chosen) == int(correct_opt):
+                    earned_points += float(pts)
+
+            final_score = (
+                round((earned_points / total_points) * 10.0, 2) if total_points > 0 else 0.0
+            )
+
+            connection.execute(
+                """
+                UPDATE quiz_attempts
+                   SET submitted_at = ?, score = ?, answers = ?
+                 WHERE id = ?
+                """,
+                (now, final_score, json.dumps(answers), attempt_id),
+            )
+            connection.execute("COMMIT")
+        except (sqlite3.Error, ValueError):
+            if connection.in_transaction:
+                connection.execute("ROLLBACK")
+            raise
+    return {
+        "attemptId": attempt_id,
+        "quizId": quiz_id,
+        "score": final_score,
+        "maxScore": 10.0,
+        "submittedAt": now,
+    }
+
+
+def list_quiz_attempts(
+    state: dict[str, Any], quiz_id: str, *, student_id: str | None = None
+) -> list[dict[str, Any]]:
+    with state["lock"]:
+        if student_id:
+            rows = (
+                state["connection"]
+                .execute(
+                    """
+                SELECT id, quiz_id, student_id, attempt_number, started_at, submitted_at, score, answers
+                  FROM quiz_attempts WHERE quiz_id = ? AND student_id = ? ORDER BY started_at
+                """,
+                    (quiz_id, student_id),
+                )
+                .fetchall()
+            )
+        else:
+            rows = (
+                state["connection"]
+                .execute(
+                    """
+                SELECT id, quiz_id, student_id, attempt_number, started_at, submitted_at, score, answers
+                  FROM quiz_attempts WHERE quiz_id = ? ORDER BY started_at
+                """,
+                    (quiz_id,),
+                )
+                .fetchall()
+            )
+        return [
+            {
+                "id": r[0],
+                "quizId": r[1],
+                "studentId": r[2],
+                "attemptNumber": r[3],
+                "startedAt": r[4],
+                "submittedAt": r[5],
+                "score": r[6],
+            }
+            for r in rows
+        ]

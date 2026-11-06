@@ -45,6 +45,7 @@ def update_profile(actor: dict[str, Any], updates: dict[str, str]) -> dict[str, 
             user["id"],
             name=updates.get("fullName"),
             bio=updates.get("bio"),
+            phone=updates.get("phone"),
         )
         audit.record(
             user["id"],
@@ -95,3 +96,40 @@ def logout(actor: dict[str, Any]) -> dict[str, str]:
         path=state["audit_log_path"],
     )
     return {"message": "Logged out"}
+
+
+def update_avatar(
+    actor: dict[str, Any], file_bytes: bytes, original_name: str, upload_dir: str
+) -> dict[str, str]:
+    from . import storage
+
+    state = current_store()
+    with state["lock"]:
+        user = _actor_user(state, actor)
+        stored_name, _, _ = storage.secure_save_file(
+            file_bytes,
+            original_name,
+            upload_dir,
+            allowed_extensions=storage.ALLOWED_AVATAR_EXTENSIONS,
+            max_bytes=storage.MAX_AVATAR_BYTES,
+        )
+        store_module.set_user_avatar(state, user["id"], stored_name)
+        audit.record(
+            user["id"],
+            "AVATAR_UPDATE",
+            "/users/me/avatar",
+            "OK",
+            path=state["audit_log_path"],
+        )
+        return {"avatar": stored_name}
+
+
+def get_avatar_path(user_id: str, upload_dir: str) -> str | None:
+    from . import storage
+
+    state = current_store()
+    with state["lock"]:
+        avatar_name = store_module.get_user_avatar(state, user_id)
+        if not avatar_name:
+            return None
+        return storage.resolve_file_path(upload_dir, avatar_name)

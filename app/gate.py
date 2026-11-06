@@ -16,6 +16,7 @@ ALLOWLIST = {
     ("POST", "/auth/password-reset/confirm"),
     ("POST", "/auth/forgot-password"),
     ("POST", "/auth/reset-password"),
+    ("GET", "/api/docs/openapi.yaml"),
 }
 
 

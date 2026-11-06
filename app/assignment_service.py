@@ -106,7 +106,13 @@ def authorize_submit(actor: dict[str, Any], assignment_id: str) -> dict[str, Any
         return assignment
 
 
-def submit(actor: dict[str, Any], assignment_id: str, content: str) -> tuple[dict[str, Any], bool]:
+def submit(
+    actor: dict[str, Any],
+    assignment_id: str,
+    content: str,
+    file_name: str = "",
+    file_path: str = "",
+) -> tuple[dict[str, Any], bool]:
     """Trả (submission, created). Gửi lại cùng nội dung -> (bài cũ, False)."""
     state = current_store()
     with state["lock"]:
@@ -117,6 +123,8 @@ def submit(actor: dict[str, Any], assignment_id: str, content: str) -> tuple[dic
             student_id=str(actor.get("id")),
             content=content,
             now=state["now"](),
+            file_name=file_name,
+            file_path=file_path,
         )
         if outcome == "conflict":
             raise Conflict()
@@ -130,6 +138,78 @@ def submit(actor: dict[str, Any], assignment_id: str, content: str) -> tuple[dic
                 path=state["audit_log_path"],
             )
         return submission or {}, outcome == "created"
+
+
+def grade_submission(
+    actor: dict[str, Any],
+    submission_id: str,
+    grade: float,
+    feedback: str,
+) -> dict[str, Any]:
+    state = current_store()
+    with state["lock"]:
+        submission = store_module.get_submission_by_id(state, submission_id)
+        if submission is None:
+            raise NotFound()
+        assignment = _assignment(state, submission["assignmentId"])
+        course = _course(state, assignment["courseId"])
+        if not _can_manage(actor, course):
+            raise Forbidden()
+
+        graded = store_module.grade_submission(
+            state,
+            submission_id=submission_id,
+            grade=grade,
+            feedback=feedback,
+            graded_by=str(actor.get("id")),
+            now=state["now"](),
+        )
+        if graded is None:
+            raise NotFound()
+        audit.record(
+            actor["id"],
+            "SUBMISSION_GRADE",
+            f"/submissions/{submission_id}/grade",
+            "OK",
+            submissionId=submission_id,
+            grade=grade,
+            path=state["audit_log_path"],
+        )
+        return graded
+
+
+def get_submission_file(
+    actor: dict[str, Any],
+    submission_id: str,
+    upload_dir: str,
+) -> tuple[str, str]:
+    from . import storage
+
+    state = current_store()
+    with state["lock"]:
+        submission = store_module.get_submission_by_id(state, submission_id)
+        if submission is None:
+            raise NotFound()
+        assignment = _assignment(state, submission["assignmentId"])
+        course = _course(state, assignment["courseId"])
+
+        role = _role(actor)
+        if role == "ADMIN" or (
+            role == "INSTRUCTOR" and course["instructorId"] == actor.get("id")
+        ):
+            pass
+        elif role == "STUDENT" and submission["studentId"] == actor.get("id"):
+            pass
+        else:
+            raise Forbidden()
+
+        file_path_name = submission.get("filePath")
+        if not file_path_name:
+            raise NotFound()
+        resolved = storage.resolve_file_path(upload_dir, file_path_name)
+        if not resolved:
+            raise NotFound()
+        return resolved, submission.get("fileName", "submission.bin")
 
 
 def list_submissions(actor: dict[str, Any], assignment_id: str) -> list[dict[str, Any]]:
