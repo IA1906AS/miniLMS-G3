@@ -207,6 +207,7 @@ def create_app(config: Mapping[str, Any] | None = None) -> Flask:
         if not os.path.isfile(spec_path):
             return {"error": "NOT_FOUND"}, 404
         from flask import send_file
+
         return send_file(spec_path, mimetype="text/yaml")
 
     @app.cli.group("outbox")

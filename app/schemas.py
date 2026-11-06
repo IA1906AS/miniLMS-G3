@@ -313,7 +313,12 @@ def parse_quiz_body(body: Any) -> tuple[str, str, int, int, list[dict[str, Any]]
         raise ValidationError()
 
     duration = body["durationMinutes"]
-    if isinstance(duration, bool) or not isinstance(duration, int) or duration <= 0 or duration > 300:
+    if (
+        isinstance(duration, bool)
+        or not isinstance(duration, int)
+        or duration <= 0
+        or duration > 300
+    ):
         raise ValidationError()
 
     max_attempts = body.get("maxAttempts", 1)
@@ -347,7 +352,11 @@ def parse_quiz_body(body: Any) -> tuple[str, str, int, int, list[dict[str, Any]]
                 raise ValidationError()
             clean_options.append(opt.strip())
         correct = q["correctOption"]
-        if isinstance(correct, bool) or not isinstance(correct, int) or not (0 <= correct < len(clean_options)):
+        if (
+            isinstance(correct, bool)
+            or not isinstance(correct, int)
+            or not (0 <= correct < len(clean_options))
+        ):
             raise ValidationError()
         points = float(q.get("points", 1.0))
         if points <= 0:
@@ -365,11 +374,20 @@ def parse_quiz_body(body: Any) -> tuple[str, str, int, int, list[dict[str, Any]]
 
 
 def parse_quiz_submit_body(body: Any) -> dict[str, int]:
-    if not isinstance(body, dict) or set(body) != {"answers"} or not isinstance(body["answers"], dict):
+    if (
+        not isinstance(body, dict)
+        or set(body) != {"answers"}
+        or not isinstance(body["answers"], dict)
+    ):
         raise ValidationError()
     answers = {}
     for q_id, opt in body["answers"].items():
-        if not isinstance(q_id, str) or isinstance(opt, bool) or not isinstance(opt, int) or opt < 0:
+        if (
+            not isinstance(q_id, str)
+            or isinstance(opt, bool)
+            or not isinstance(opt, int)
+            or opt < 0
+        ):
             raise ValidationError()
         answers[q_id] = opt
     return answers

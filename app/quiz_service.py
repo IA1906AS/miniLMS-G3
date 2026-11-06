@@ -7,7 +7,7 @@ from typing import Any
 
 from . import audit
 from . import store as store_module
-from .errors import Conflict, Forbidden, NotFound, ValidationError
+from .errors import Conflict, Forbidden, NotFound
 from .runtime import current_store
 
 
@@ -99,7 +99,10 @@ def get_quiz(actor: dict[str, Any], quiz_id: str) -> dict[str, Any]:
         course = _course(state, raw_quiz["courseId"])
         can_manage = _can_manage(actor, course)
         if not can_manage:
-            if _role(actor) != "STUDENT" or (raw_quiz["courseId"], actor.get("id")) not in state["enrollments"]:
+            if (
+                _role(actor) != "STUDENT"
+                or (raw_quiz["courseId"], actor.get("id")) not in state["enrollments"]
+            ):
                 raise Forbidden()
             return store_module.get_quiz(state, quiz_id, include_answers=False) or {}
         return raw_quiz
@@ -200,8 +203,5 @@ def list_attempts(actor: dict[str, Any], quiz_id: str) -> list[dict[str, Any]]:
         if _can_manage(actor, course):
             return store_module.list_quiz_attempts(state, quiz_id)
         if role == "STUDENT" and (quiz["courseId"], actor.get("id")) in state["enrollments"]:
-            return store_module.list_quiz_attempts(
-                state, quiz_id, student_id=str(actor.get("id"))
-            )
+            return store_module.list_quiz_attempts(state, quiz_id, student_id=str(actor.get("id")))
         raise Forbidden()
-

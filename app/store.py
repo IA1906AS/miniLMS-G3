@@ -963,12 +963,14 @@ def delete_course(state: dict[str, Any], course_id: str) -> bool:
         connection.execute("BEGIN IMMEDIATE")
         try:
             connection.execute(
-                "DELETE FROM comments WHERE thread_id IN (SELECT id FROM threads WHERE course_id = ?)",
+                "DELETE FROM comments WHERE thread_id IN"
+                " (SELECT id FROM threads WHERE course_id = ?)",
                 (course_id,),
             )
             connection.execute("DELETE FROM threads WHERE course_id = ?", (course_id,))
             connection.execute(
-                "DELETE FROM submissions WHERE assignment_id IN (SELECT id FROM assignments WHERE course_id = ?)",
+                "DELETE FROM submissions WHERE assignment_id IN"
+                " (SELECT id FROM assignments WHERE course_id = ?)",
                 (course_id,),
             )
             connection.execute("DELETE FROM assignments WHERE course_id = ?", (course_id,))
@@ -995,7 +997,7 @@ def list_course_members(state: dict[str, Any], course_id: str) -> list[dict[str,
         if course is None:
             return []
         instructor_id = course["instructorId"]
-        student_ids = [sid for (cid, sid) in state["enrollments"].keys() if cid == course_id]
+        student_ids = [sid for (cid, sid) in state["enrollments"] if cid == course_id]
         all_ids = [instructor_id] + [sid for sid in student_ids if sid != instructor_id]
         members = []
         for uid in all_ids:
@@ -1855,7 +1857,9 @@ def set_user_avatar(state: dict[str, Any], user_id: str, avatar_path: str) -> No
         connection = state["connection"]
         connection.execute("BEGIN IMMEDIATE")
         try:
-            connection.execute("UPDATE users SET avatar_path = ? WHERE id = ?", (avatar_path, user_id))
+            connection.execute(
+                "UPDATE users SET avatar_path = ? WHERE id = ?", (avatar_path, user_id)
+            )
             connection.execute("COMMIT")
         except sqlite3.Error:
             connection.execute("ROLLBACK")
@@ -1904,7 +1908,8 @@ def create_quiz(
             connection.execute(
                 """
                 INSERT INTO quizzes
-                    (id, course_id, title, description, duration_minutes, max_attempts, created_by, created_at)
+                    (id, course_id, title, description, duration_minutes,
+                     max_attempts, created_by, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
@@ -1948,7 +1953,8 @@ def list_quizzes(state: dict[str, Any], course_id: str) -> list[dict[str, Any]]:
             state["connection"]
             .execute(
                 """
-            SELECT id, course_id, title, description, duration_minutes, max_attempts, created_by, created_at
+            SELECT id, course_id, title, description, duration_minutes,
+                   max_attempts, created_by, created_at
               FROM quizzes WHERE course_id = ? ORDER BY created_at
             """,
                 (course_id,),
@@ -1966,7 +1972,8 @@ def get_quiz(
             state["connection"]
             .execute(
                 """
-            SELECT id, course_id, title, description, duration_minutes, max_attempts, created_by, created_at
+            SELECT id, course_id, title, description, duration_minutes,
+                   max_attempts, created_by, created_at
               FROM quizzes WHERE id = ?
             """,
                 (quiz_id,),
@@ -2091,7 +2098,8 @@ def get_quiz_attempt(state: dict[str, Any], attempt_id: str) -> dict[str, Any] |
             state["connection"]
             .execute(
                 """
-            SELECT id, quiz_id, student_id, attempt_number, started_at, submitted_at, score, answers
+            SELECT id, quiz_id, student_id, attempt_number, started_at,
+                   submitted_at, score, answers
               FROM quiz_attempts WHERE id = ?
             """,
                 (attempt_id,),
@@ -2183,7 +2191,8 @@ def list_quiz_attempts(
                 state["connection"]
                 .execute(
                     """
-                SELECT id, quiz_id, student_id, attempt_number, started_at, submitted_at, score, answers
+                SELECT id, quiz_id, student_id, attempt_number, started_at,
+                       submitted_at, score, answers
                   FROM quiz_attempts WHERE quiz_id = ? AND student_id = ? ORDER BY started_at
                 """,
                     (quiz_id, student_id),
@@ -2195,7 +2204,8 @@ def list_quiz_attempts(
                 state["connection"]
                 .execute(
                     """
-                SELECT id, quiz_id, student_id, attempt_number, started_at, submitted_at, score, answers
+                SELECT id, quiz_id, student_id, attempt_number, started_at,
+                       submitted_at, score, answers
                   FROM quiz_attempts WHERE quiz_id = ? ORDER BY started_at
                 """,
                     (quiz_id,),

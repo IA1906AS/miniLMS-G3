@@ -194,13 +194,11 @@ def get_submission_file(
         course = _course(state, assignment["courseId"])
 
         role = _role(actor)
-        if role == "ADMIN" or (
-            role == "INSTRUCTOR" and course["instructorId"] == actor.get("id")
+        if not (
+            role == "ADMIN"
+            or (role == "INSTRUCTOR" and course["instructorId"] == actor.get("id"))
+            or (role == "STUDENT" and submission["studentId"] == actor.get("id"))
         ):
-            pass
-        elif role == "STUDENT" and submission["studentId"] == actor.get("id"):
-            pass
-        else:
             raise Forbidden()
 
         file_path_name = submission.get("filePath")

@@ -139,13 +139,11 @@ def list_course_members(actor: dict[str, Any], course_id: str) -> list[dict[str,
     role = _role(actor)
     with state["lock"]:
         course = _course(state, course_id)
-        if role == "ADMIN":
-            pass
-        elif role == "INSTRUCTOR" and course["instructorId"] == actor.get("id"):
-            pass
-        elif role == "STUDENT" and (course_id, actor.get("id")) in state["enrollments"]:
-            pass
-        else:
+        if not (
+            role == "ADMIN"
+            or (role == "INSTRUCTOR" and course["instructorId"] == actor.get("id"))
+            or (role == "STUDENT" and (course_id, actor.get("id")) in state["enrollments"])
+        ):
             raise Forbidden()
         return store_module.list_course_members(state, course_id)
 

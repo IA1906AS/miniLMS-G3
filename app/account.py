@@ -57,9 +57,7 @@ def upload_avatar() -> Any:
         raise ValidationError()
     return (
         jsonify(
-            account_service.update_avatar(
-                g.actor, file.read(), file.filename, _avatar_upload_dir()
-            )
+            account_service.update_avatar(g.actor, file.read(), file.filename, _avatar_upload_dir())
         ),
         200,
     )

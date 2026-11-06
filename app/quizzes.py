@@ -75,4 +75,3 @@ def submit_attempt(quiz_id: str, attempt_id: str) -> Any:
 @store_scope
 def list_attempts(quiz_id: str) -> Any:
     return jsonify(quiz_service.list_attempts(g.actor, quiz_id))
-

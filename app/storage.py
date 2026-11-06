@@ -6,9 +6,8 @@ Không import Flask request trực tiếp; nhận file object hoặc bytes.
 
 import os
 import uuid
-from typing import Any
 
-from .errors import AppError, ValidationError
+from .errors import ValidationError
 
 # Giới hạn kích thước tệp
 MAX_AVATAR_BYTES = 2 * 1024 * 1024  # 2MB
@@ -90,4 +89,3 @@ def resolve_file_path(target_dir: str, filename: str) -> str | None:
     if not os.path.isfile(destination):
         return None
     return destination
-

@@ -62,4 +62,3 @@ def download_material(material_id: str) -> Any:
 @store_scope
 def delete_material(material_id: str) -> Any:
     return jsonify(material_service.delete_material(g.actor, material_id, _upload_dir()))
-

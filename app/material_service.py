@@ -4,6 +4,7 @@ Tải lên, danh sách, tải xuống và xoá tài liệu môn học.
 Chỉ giảng viên phụ trách hoặc ADMIN được tạo/xoá; sinh viên đã ghi danh được tải.
 """
 
+import contextlib
 import os
 from typing import Any
 
@@ -126,10 +127,8 @@ def delete_material(actor: dict[str, Any], material_id: str, upload_dir: str) ->
             raise NotFound()
         filepath = storage.resolve_file_path(upload_dir, material["filePath"])
         if filepath and os.path.isfile(filepath):
-            try:
+            with contextlib.suppress(OSError):
                 os.remove(filepath)
-            except OSError:
-                pass
         audit.record(
             actor["id"],
             "MATERIAL_DELETE",
@@ -139,4 +138,3 @@ def delete_material(actor: dict[str, Any], material_id: str, upload_dir: str) ->
             path=state["audit_log_path"],
         )
         return {"id": material_id, "deleted": True}
-

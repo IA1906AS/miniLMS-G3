@@ -36,7 +36,7 @@ def login(client, email: str, password: str = PASSWORD) -> str:
 
 
 def test_quizzes_full_lifecycle_and_auto_grading(client):
-    admin = login(client, "admin@lms.test")
+    login(client, "admin@lms.test")
     an = login(client, "an.gv@lms.test")  # instructor of c1
     chi = login(client, "chi.sv@lms.test")  # student in c1
     em = login(client, "em.sv@lms.test")  # student NOT in c1
@@ -62,7 +62,9 @@ def test_quizzes_full_lifecycle_and_auto_grading(client):
             },
         ],
     }
-    assert client.post("/courses/c1/quizzes", json=quiz_payload, headers=auth(chi)).status_code == 403
+    assert (
+        client.post("/courses/c1/quizzes", json=quiz_payload, headers=auth(chi)).status_code == 403
+    )
 
     # 2. Instructor of course creates quiz
     create_res = client.post("/courses/c1/quizzes", json=quiz_payload, headers=auth(an))
@@ -181,9 +183,7 @@ def test_quiz_validation_errors(client):
             json={
                 "title": "Q",
                 "durationMinutes": -5,
-                "questions": [
-                    {"question": "A?", "options": ["1", "2"], "correctOption": 0}
-                ],
+                "questions": [{"question": "A?", "options": ["1", "2"], "correctOption": 0}],
             },
             headers=auth(an),
         ).status_code
@@ -197,9 +197,7 @@ def test_quiz_validation_errors(client):
             json={
                 "title": "Q",
                 "durationMinutes": 10,
-                "questions": [
-                    {"question": "A?", "options": ["1", "2"], "correctOption": 5}
-                ],
+                "questions": [{"question": "A?", "options": ["1", "2"], "correctOption": 5}],
             },
             headers=auth(an),
         ).status_code

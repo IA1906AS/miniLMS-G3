@@ -1,6 +1,7 @@
 """Kiểm thử Lưu trữ tệp, Tài liệu bài giảng, Ảnh đại diện, và Chấm điểm bài tập."""
 
 import io
+
 import pytest
 
 from app import create_app
@@ -88,7 +89,7 @@ def test_avatar_upload_rejects_invalid_extension(client):
 
 
 def test_materials_lifecycle_and_permissions(client):
-    admin = login(client, "admin@lms.test")
+    login(client, "admin@lms.test")
     an = login(client, "an.gv@lms.test")  # instructor c1
     chi = login(client, "chi.sv@lms.test")  # student in c1
     em = login(client, "em.sv@lms.test")  # student NOT in c1
@@ -198,4 +199,3 @@ def test_submission_with_file_and_grading(client):
     assert len(my_subs) == 1
     assert my_subs[0]["grade"] == 9.5
     assert my_subs[0]["feedback"] == "Làm bài rất tốt, code sạch"
-
