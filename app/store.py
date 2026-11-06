@@ -28,6 +28,7 @@ def init(
             email TEXT NOT NULL UNIQUE COLLATE NOCASE,
             name TEXT NOT NULL DEFAULT '',
             bio TEXT NOT NULL DEFAULT '',
+            locked INTEGER NOT NULL DEFAULT 0,
             role TEXT NOT NULL,
             pw_hash BLOB NOT NULL
         );
@@ -83,6 +84,8 @@ def init(
     columns = {row[1] for row in connection.execute("PRAGMA table_info(users)")}
     if "bio" not in columns:  # DB cũ tạo trước khi có cột bio
         connection.execute("ALTER TABLE users ADD COLUMN bio TEXT NOT NULL DEFAULT ''")
+    if "locked" not in columns:  # DB cũ tạo trước khi có cờ khoá
+        connection.execute("ALTER TABLE users ADD COLUMN locked INTEGER NOT NULL DEFAULT 0")
     seed = json.loads((pathlib.Path(__file__).parent / "seed.json").read_text(encoding="utf-8"))
     with connection:
         for user_data in seed["users"]:
@@ -139,12 +142,14 @@ def init(
         for row in connection.execute("SELECT course_id, student_id, score FROM enrollments")
     }
     bios = {row[0]: row[1] for row in connection.execute("SELECT id, bio FROM users")}
+    locked = {row[0]: bool(row[1]) for row in connection.execute("SELECT id, locked FROM users")}
     db = {
         "users": users,
         "by_email": {user["email"].lower(): user for user in users.values()},
         "courses": courses,
         "enrollments": enrollments,
         "bios": bios,
+        "locked": locked,
         "attempts": {},
         "tokens_valid_after": {},
         "now": now,
@@ -193,6 +198,10 @@ def refresh(state: dict[str, Any]) -> None:
         state["bios"].update(
             {row[0]: row[1] for row in connection.execute("SELECT id, bio FROM users")}
         )
+        state["locked"].clear()
+        state["locked"].update(
+            {row[0]: bool(row[1]) for row in connection.execute("SELECT id, locked FROM users")}
+        )
 
 
 def create_user(
@@ -229,6 +238,7 @@ def create_user(
         state["users"][user["id"]] = user
         state["by_email"][email.lower()] = user
         state["bios"][user["id"]] = ""
+        state["locked"][user["id"]] = False
     return user
 
 
@@ -317,6 +327,7 @@ def get_or_create_oauth_user(
         state["users"][user["id"]] = user
         state["by_email"][email.lower()] = user
         state["bios"].setdefault(user["id"], "")
+        state["locked"].setdefault(user["id"], False)
         return user
 
 
@@ -707,6 +718,21 @@ def update_password_hash(state: dict[str, Any], user_id: str, password_hash: byt
         user = state["users"].get(user_id)
         if user is not None:
             user["pw_hash"] = password_hash
+
+
+def set_user_locked(state: dict[str, Any], user_id: str, locked: bool) -> None:
+    with state["lock"]:
+        connection = state["connection"]
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            connection.execute(
+                "UPDATE users SET locked = ? WHERE id = ?", (1 if locked else 0, user_id)
+            )
+            connection.execute("COMMIT")
+        except sqlite3.Error:
+            connection.execute("ROLLBACK")
+            raise
+        state["locked"][user_id] = locked
 
 
 def create_course(state: dict[str, Any], *, name: str, instructor_id: str) -> dict[str, Any]:

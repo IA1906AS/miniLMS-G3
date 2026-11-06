@@ -11,11 +11,11 @@ from flask import Flask, g, jsonify, request, session
 
 from . import (
     account,
+    admin,
     audit,
     auth,
     courses,
     errors,
-    extended,
     gate,
     outbox,
     passwords,
@@ -102,7 +102,7 @@ def create_app(config: Mapping[str, Any] | None = None) -> Flask:
     errors.register(app)
     gate.install(app)
     app.register_blueprint(web.web)
-    app.register_blueprint(extended.bp)
+    app.register_blueprint(admin.bp)
     app.register_blueprint(account.bp)
     app.register_blueprint(courses.bp)
 

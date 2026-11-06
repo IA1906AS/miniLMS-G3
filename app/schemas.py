@@ -189,3 +189,14 @@ def parse_course_request_body(body: Any) -> str:
     if not isinstance(body, dict) or set(body) != {"name"}:
         raise ValidationError()
     return validate_course_name(body["name"])
+
+
+def parse_audit_limit(raw: str | None) -> int:
+    if raw is None:
+        return 100
+    if not isinstance(raw, str) or not raw.isdigit():
+        raise ValidationError()
+    limit = int(raw)
+    if not 1 <= limit <= 1000:
+        raise ValidationError()
+    return limit

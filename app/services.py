@@ -1,18 +1,16 @@
 import time
 from typing import Any
 
-from . import audit, auth, outbox, schemas
+from . import audit, outbox, schemas
 from . import store as store_module
-from .errors import Conflict, Forbidden, NotFound, ValidationError
+from .errors import Conflict, Forbidden, NotFound
 from .runtime import current_store as _store
 from .runtime import using_store  # re-export: tương thích với code/test cũ
 
 __all__ = [
     "authorize_update",
-    "change_role",
     "enroll_in_course",
     "get_grades",
-    "list_users",
     "update_grade",
     "using_store",
 ]
@@ -149,57 +147,4 @@ def enroll_in_course(actor: dict[str, Any], course_id: str) -> dict[str, Any]:
             "studentId": student_id,
             "score": 0.0,
             "outboxEventId": event["eventId"],
-        }
-
-
-def list_users(actor: dict[str, Any]) -> list[dict[str, Any]]:
-    store = _store()
-    if _actor_role(actor) != "ADMIN":
-        raise Forbidden()
-    with store["lock"]:
-        return [
-            {
-                "id": user["id"],
-                "email": user["email"],
-                "name": user.get("name", ""),
-                "role": user["role"],
-            }
-            for user in store["users"].values()
-        ]
-
-
-def change_role(actor: dict[str, Any], user_id: str, role: str) -> dict[str, Any]:
-    store = _store()
-    with store["lock"]:
-        if _actor_role(actor) != "ADMIN":
-            raise Forbidden()
-        target = store["users"].get(user_id)
-        if target is None:
-            raise NotFound()
-        if (
-            target["role"] == "ADMIN"
-            and role != "ADMIN"
-            and store_module.count_users_with_role(store, "ADMIN") <= 1
-        ):
-            raise ValidationError()
-        if user_id == actor.get("id") and role != "ADMIN":
-            raise ValidationError()
-
-        old_role = target["role"]
-        store_module.set_user_role(store, user_id, role)
-        auth.invalidate_tokens(store, user_id)
-        audit.record(
-            actor["id"],
-            "ROLE_CHANGE",
-            f"/admin/users/{user_id}/role",
-            "OK",
-            oldRole=old_role,
-            newRole=role,
-            path=store["audit_log_path"],
-        )
-        return {
-            "id": target["id"],
-            "email": target["email"],
-            "name": target.get("name", ""),
-            "role": role,
         }

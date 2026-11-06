@@ -70,6 +70,9 @@ def verify_token(token: str, secret: str, state: dict[str, Any] | None = None) -
     valid_after = current["tokens_valid_after"].get(payload["sub"], 0)
     if payload["iat"] < valid_after:
         raise Unauthenticated()
+    if current["locked"].get(user["id"]):
+        # Tài khoản bị khoá: mọi request mang token cũ đều 401.
+        raise Unauthenticated()
     return {"id": user["id"], "email": user["email"], "role": user["role"]}
 
 
@@ -90,6 +93,9 @@ def _authenticate_user(
             attempt.update(fails=0, locked_until=0.0)
 
         user = current["by_email"].get(key)
+        if user is not None and current["locked"].get(user["id"]):
+            # Tài khoản bị admin khoá: 429 kể cả khi mật khẩu đúng.
+            raise AccountLocked()
         encoded_password = password.encode("utf-8")
         password_hash = user["pw_hash"] if user is not None else _DUMMY
         password_matches = bcrypt.checkpw(encoded_password[:72], password_hash)

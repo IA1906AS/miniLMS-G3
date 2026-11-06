@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from app import course_service, create_app, services
+from app import admin_service, course_service, create_app
 from app.services import using_store
 
 SECRET = "unit-test-secret-with-at-least-32-characters"
@@ -186,7 +186,7 @@ def test_admin_lists_users_without_hashes(client):
     users = response.get_json()
     assert len(users) == 6
     assert {user["id"] for user in users} == {"u1", "u2", "u3", "u4", "u5", "u6"}
-    assert all(set(user) == {"id", "email", "name", "role"} for user in users)
+    assert all(set(user) == {"id", "email", "name", "role", "locked"} for user in users)
     text = response.get_data(as_text=True).lower()
     assert "pw_hash" not in text and "password" not in text
 
@@ -284,9 +284,9 @@ def test_services_recheck_authorization_without_routes(app):
         with pytest.raises(Forbidden):
             course_service.enroll_student(chi, "c1", "u5")
         with pytest.raises(Forbidden):
-            services.list_users(chi)
+            admin_service.list_users(chi)
         with pytest.raises(Forbidden):
-            services.change_role(chi, "u4", "ADMIN")
+            admin_service.change_role(chi, "u4", "ADMIN")
         with pytest.raises(Forbidden):
             course_service.get_course(an, "c2")
         with pytest.raises(Forbidden):
