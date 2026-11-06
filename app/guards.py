@@ -6,7 +6,6 @@ from flask import current_app, g
 
 from app.errors import Forbidden, NotFound, Unauthenticated
 
-
 View = TypeVar("View", bound=Callable[..., Any])
 
 

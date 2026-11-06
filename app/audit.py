@@ -1,8 +1,7 @@
 import json
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-
 
 _path: str | Path = "audit.log"
 _lock = threading.Lock()
@@ -23,7 +22,7 @@ def record(
     **extra: object,
 ) -> None:
     line = {
-        "ts": datetime.now(timezone.utc).isoformat(),
+        "ts": datetime.now(UTC).isoformat(),
         "actorId": actor_id,
         "action": action,
         "resource": resource,

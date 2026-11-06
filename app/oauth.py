@@ -49,7 +49,13 @@ def _request_json(
     try:
         with urllib.request.urlopen(request, timeout=12) as response:
             payload = json.loads(response.read().decode("utf-8"))
-    except (urllib.error.URLError, TimeoutError, OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+    except (
+        urllib.error.URLError,
+        TimeoutError,
+        OSError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+    ) as error:
         raise OAuthError("OAuth provider request failed") from error
     if not isinstance(payload, (dict, list)):
         raise OAuthError("OAuth provider returned an invalid response")
@@ -144,9 +150,7 @@ def fetch_profile(
     }
 
     if provider == "google":
-        profile = _request_json(
-            "https://openidconnect.googleapis.com/v1/userinfo", headers=headers
-        )
+        profile = _request_json("https://openidconnect.googleapis.com/v1/userinfo", headers=headers)
         if not isinstance(profile, dict):
             raise OAuthError("Google returned an invalid profile")
         subject = profile.get("sub")
@@ -177,9 +181,8 @@ def fetch_profile(
     if not isinstance(subject, (str, int)) or not isinstance(email, str) or not verified:
         raise OAuthError("A verified email address is required")
     normalized_email = email.strip().lower()
-    if (
-        len(normalized_email) > 254
-        or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", normalized_email)
+    if len(normalized_email) > 254 or not re.fullmatch(
+        r"[^@\s]+@[^@\s]+\.[^@\s]+", normalized_email
     ):
         raise OAuthError("Provider returned an invalid email")
     display_name = name.strip() if isinstance(name, str) else ""

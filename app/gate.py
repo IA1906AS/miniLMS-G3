@@ -5,7 +5,10 @@ from flask import Flask, g, request, session
 from . import auth, store
 from .errors import Unauthenticated, ValidationError
 
-
+# Gate mặc định TỪ CHỐI: mọi request không thuộc allowlist và không phải blueprint
+# `web` đều phải có Bearer hợp lệ. Các route dưới đây là bề mặt tự phục vụ của sản phẩm
+# (đăng ký, quên/đặt lại mật khẩu); endpoint nội bộ mới KHÔNG được thêm vào đây.
+# Khác biệt so với đề Defense-in-Depth (allowlist chỉ có /auth/login) ghi ở ADR 0007.
 ALLOWLIST = {
     ("POST", "/auth/login"),
     ("POST", "/auth/register"),

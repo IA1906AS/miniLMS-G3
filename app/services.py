@@ -1,33 +1,19 @@
-import contextlib
-import contextvars
-from collections.abc import Iterator
+import time
 from typing import Any
 
-from . import audit, schemas, store as store_module
-from .errors import Forbidden, NotFound
+from . import audit, outbox, schemas
+from . import store as store_module
+from .errors import Conflict, Forbidden, NotFound
+from .runtime import current_store as _store
+from .runtime import using_store  # re-export: tương thích với code/test cũ
 
-
-_active_store: contextvars.ContextVar[dict[str, Any] | None] = (
-    contextvars.ContextVar("lms_service_store", default=None)
-)
-
-
-@contextlib.contextmanager
-def using_store(store: dict[str, Any]) -> Iterator[None]:
-    token = _active_store.set(store)
-    try:
-        yield
-    finally:
-        _active_store.reset(token)
-
-
-def _store() -> dict[str, Any]:
-    store = _active_store.get()
-    if store is None:
-        store = store_module.db
-    if store is None:
-        raise RuntimeError("The LMS store has not been initialized")
-    return store
+__all__ = [
+    "authorize_update",
+    "enroll_in_course",
+    "get_grades",
+    "update_grade",
+    "using_store",
+]
 
 
 def _actor_role(actor: dict[str, Any]) -> str | None:
@@ -111,3 +97,54 @@ def update_grade(
         )
         store_module.update_grade(store, course_id, student_id, score)
         return {"courseId": course_id, "studentId": student_id, "score": score}
+
+
+def enroll_in_course(actor: dict[str, Any], course_id: str) -> dict[str, Any]:
+    """Enroll the acting student and queue the confirmation email atomically."""
+    store = _store()
+    with store["lock"]:
+        course = _course(course_id)
+        if _actor_role(actor) != "STUDENT":
+            raise Forbidden()
+
+        student_id = str(actor.get("id"))
+        if (course_id, student_id) in store["enrollments"]:
+            raise Conflict()
+
+        user = store["users"].get(student_id) or {}
+        student_email = actor.get("email") or user.get("email") or ""
+        event = outbox.new_event(
+            outbox.EVENT_ENROLLMENT_CONFIRMED,
+            outbox.enrollment_confirmation_payload(
+                student_id=student_id,
+                student_email=str(student_email),
+                student_name=str(user.get("name", "")),
+                course_id=course_id,
+                course_name=str(course["name"]),
+            ),
+        )
+        try:
+            store_module.create_enrollment(
+                store,
+                course_id=course_id,
+                student_id=student_id,
+                event=event,
+                now=time.time(),
+            )
+        except ValueError as error:
+            raise Conflict() from error
+
+        audit.record(
+            student_id,
+            "ENROLL_COURSE",
+            f"/courses/{course_id}/enrollments",
+            "OK",
+            eventId=event["eventId"],
+            path=store["audit_log_path"],
+        )
+        return {
+            "courseId": course_id,
+            "studentId": student_id,
+            "score": 0.0,
+            "outboxEventId": event["eventId"],
+        }

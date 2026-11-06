@@ -3,11 +3,10 @@ import json
 import time
 
 import pytest
-from flask import abort, jsonify
+from flask import jsonify
 
 from app import create_app
-from app import services
-from app.errors import Forbidden, NotFound, Unauthenticated, ValidationError
+from app.errors import Forbidden, Unauthenticated
 from app.guards import require_role
 from app.services import update_grade
 
@@ -56,9 +55,7 @@ def decode_payload(token: str) -> dict:
 
 
 def encode_payload(payload: dict) -> str:
-    encoded = base64.urlsafe_b64encode(
-        json.dumps(payload, separators=(",", ":")).encode()
-    )
+    encoded = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode())
     return encoded.rstrip(b"=").decode()
 
 
@@ -96,9 +93,7 @@ def test_A3_changing_subject_without_resigning_is_rejected(client):
 def test_A4_none_algorithm_token_is_rejected(client):
     token = login(client, "chi.sv@lms.test")
     _, payload, _ = token.split(".")
-    none_header = base64.urlsafe_b64encode(
-        b'{"alg":"none","typ":"JWT"}'
-    ).rstrip(b"=").decode()
+    none_header = base64.urlsafe_b64encode(b'{"alg":"none","typ":"JWT"}').rstrip(b"=").decode()
     unsigned = f"{none_header}.{payload}."
 
     response = client.get("/me", headers=auth(unsigned))
@@ -280,9 +275,8 @@ def test_gate_authenticates_unknown_routes_before_404(app):
 
 def test_role_guard_rejects_request_without_actor(app):
     guarded = require_role("ADMIN")(lambda: jsonify({"ok": True}))
-    with app.test_request_context("/guarded"):
-        with pytest.raises(Unauthenticated):
-            guarded()
+    with app.test_request_context("/guarded"), pytest.raises(Unauthenticated):
+        guarded()
 
 
 def test_A17_missing_secret_prevents_app_creation(monkeypatch):

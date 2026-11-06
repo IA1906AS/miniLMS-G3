@@ -20,4 +20,21 @@
       {% endfor %}
     </div>
   </section>
+  {% if user.role == "STUDENT" and available %}
+    <section class="section">
+      <h2>Đăng ký khóa học</h2>
+      <div class="course-list">
+        {% for course in available %}
+          <article class="card">
+            <h3>{{ course.name }}</h3>
+            <p>Mã khóa học: {{ course.id }}</p>
+            <form method="post" action="{{ url_for('web.enroll_course', course_id=course.id) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+              <button type="submit">Đăng ký</button>
+            </form>
+          </article>
+        {% endfor %}
+      </div>
+    </section>
+  {% endif %}
 {% endblock %}

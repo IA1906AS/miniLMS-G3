@@ -59,12 +59,13 @@ def register(app: Flask) -> None:
     def handle_http_error(error: HTTPException) -> tuple[Any, int]:
         if error.code == 403:
             return handle_app_error(Forbidden())
+        status = error.code or 500
         code = {
             400: "VALIDATION_ERROR",
             404: "NOT_FOUND",
             405: "METHOD_NOT_ALLOWED",
-        }.get(error.code, "INTERNAL_ERROR")
-        return jsonify(error=code), error.code or 500
+        }.get(status, "INTERNAL_ERROR")
+        return jsonify(error=code), status
 
     @app.errorhandler(Exception)
     def handle_unexpected_error(error: Exception) -> tuple[Any, int]:

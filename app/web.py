@@ -2,8 +2,9 @@ import hmac
 import secrets
 import smtplib
 import time
+from collections.abc import Callable
 from functools import wraps
-from typing import Any, Callable, TypeVar, cast
+from typing import Any, TypeVar, cast
 
 from flask import (
     Blueprint,
@@ -18,9 +19,15 @@ from flask import (
     url_for,
 )
 
-from . import auth, oauth, passwords, schemas, store
-from .errors import AccountLocked, Conflict, InvalidCredentials, ValidationError
-
+from . import auth, oauth, passwords, schemas, services, store
+from .errors import (
+    AccountLocked,
+    Conflict,
+    Forbidden,
+    InvalidCredentials,
+    NotFound,
+    ValidationError,
+)
 
 web = Blueprint("web", __name__)
 View = TypeVar("View", bound=Callable[..., Any])
@@ -85,9 +92,7 @@ def login_form() -> str | Any:
                 "login.html", error="Tài khoản tạm khóa do đăng nhập sai nhiều lần."
             ), 429
         except (InvalidCredentials, ValidationError):
-            return render_template(
-                "login.html", error="Email hoặc mật khẩu không chính xác."
-            ), 401
+            return render_template("login.html", error="Email hoặc mật khẩu không chính xác."), 401
         session.clear()
         session["user_id"] = user["id"]
         return redirect(url_for("web.account"))
@@ -104,8 +109,7 @@ def register_form() -> str | Any:
         }
         try:
             if (
-                request.form.get("password")
-                != request.form.get("confirm_password")
+                request.form.get("password") != request.form.get("confirm_password")
                 or request.form.get("terms") != "on"
             ):
                 raise ValidationError()
@@ -124,9 +128,7 @@ def register_form() -> str | Any:
                 error="Vui lòng kiểm tra thông tin, xác nhận mật khẩu và các điều kiện bảo mật.",
             ), 400
         except Conflict:
-            return render_template(
-                "register.html", error="Email này đã được đăng ký."
-            ), 409
+            return render_template("register.html", error="Email này đã được đăng ký."), 409
         return redirect(url_for("web.login_form", registered="1"))
     return render_template("register.html")
 
@@ -136,6 +138,7 @@ def register_form() -> str | Any:
 def account() -> str:
     user = g.web_user
     state = current_app.extensions["lms_store"]
+    available: list[dict[str, Any]] = []
     if user["role"] == "STUDENT":
         courses = [
             {
@@ -145,15 +148,38 @@ def account() -> str:
             for (course_id, student_id), score in state["enrollments"].items()
             if student_id == user["id"] and course_id in state["courses"]
         ]
-    elif user["role"] == "INSTRUCTOR":
-        courses = [
+        available = [
             course
             for course in state["courses"].values()
-            if course["instructorId"] == user["id"]
+            if (course["id"], user["id"]) not in state["enrollments"]
+        ]
+    elif user["role"] == "INSTRUCTOR":
+        courses = [
+            course for course in state["courses"].values() if course["instructorId"] == user["id"]
         ]
     else:
         courses = list(state["courses"].values())
-    return render_template("account.html", user=user, courses=courses)
+    return render_template("account.html", user=user, courses=courses, available=available)
+
+
+@web.post("/courses/<course_id>/enroll")
+@login_required
+def enroll_course(course_id: str) -> Any:
+    try:
+        with services.using_store(current_app.extensions["lms_store"]):
+            services.enroll_in_course(g.web_user, course_id)
+    except Conflict:
+        flash("Bạn đã đăng ký khóa học này rồi.", "error")
+    except Forbidden:
+        abort(403)
+    except NotFound:
+        abort(404)
+    else:
+        flash(
+            "Đăng ký thành công. Email xác nhận sẽ được gửi tới hộp thư của bạn.",
+            "info",
+        )
+    return redirect(url_for("web.account"))
 
 
 @web.post("/logout")
@@ -173,8 +199,7 @@ def oauth_start(provider: str) -> Any:
     session["oauth_verifier"] = verifier
     session["oauth_started_at"] = time.time()
     redirect_uri = (
-        f"{current_app.config['PUBLIC_BASE_URL']}"
-        f"{url_for('web.oauth_callback', provider=provider)}"
+        f"{current_app.config['PUBLIC_BASE_URL']}{url_for('web.oauth_callback', provider=provider)}"
     )
     try:
         authorization_url = oauth.create_authorization_url(
@@ -186,7 +211,8 @@ def oauth_start(provider: str) -> Any:
         session.pop("oauth_verifier", None)
         session.pop("oauth_started_at", None)
         flash(
-            f"Đăng nhập {provider.title()} chưa được cấu hình. Vui lòng dùng email hoặc liên hệ quản trị viên.",
+            f"Đăng nhập {provider.title()} chưa được cấu hình. "
+            "Vui lòng dùng email hoặc liên hệ quản trị viên.",
             "error",
         )
         return redirect(url_for("web.login_form"))
@@ -225,13 +251,10 @@ def oauth_callback(provider: str) -> Any:
         return redirect(url_for("web.login_form"))
 
     redirect_uri = (
-        f"{current_app.config['PUBLIC_BASE_URL']}"
-        f"{url_for('web.oauth_callback', provider=provider)}"
+        f"{current_app.config['PUBLIC_BASE_URL']}{url_for('web.oauth_callback', provider=provider)}"
     )
     try:
-        profile = oauth.fetch_profile(
-            provider, current_app.config, code, redirect_uri, verifier
-        )
+        profile = oauth.fetch_profile(provider, current_app.config, code, redirect_uri, verifier)
         user = store.get_or_create_oauth_user(
             current_app.extensions["lms_store"],
             provider=provider,
@@ -269,18 +292,14 @@ def oauth_callback(provider: str) -> Any:
 def forgot_password_form() -> str | Any:
     if request.method == "POST":
         try:
-            email = schemas.parse_password_reset_request(
-                {"email": request.form.get("email", "")}
-            )
+            email = schemas.parse_password_reset_request({"email": request.form.get("email", "")})
             passwords.request_password_reset(
                 email,
                 current_app.extensions["lms_store"],
                 current_app.config,
             )
         except ValidationError:
-            return render_template(
-                "forgot_password.html", error="Vui lòng nhập email hợp lệ."
-            ), 400
+            return render_template("forgot_password.html", error="Vui lòng nhập email hợp lệ."), 400
         except (RuntimeError, OSError, smtplib.SMTPException):
             return render_template(
                 "forgot_password.html",
@@ -300,9 +319,7 @@ def password_reset_form(token: str | None = None) -> str | Any:
         password = request.form.get("password", "")
         confirmation = request.form.get("confirm_password", "")
         try:
-            schemas.parse_password_reset_confirmation(
-                {"token": token, "password": password}
-            )
+            schemas.parse_password_reset_confirmation({"token": token, "password": password})
         except ValidationError:
             return render_template(
                 "reset_password.html",
@@ -315,9 +332,7 @@ def password_reset_form(token: str | None = None) -> str | Any:
                 reset_token=token,
                 error="Mật khẩu xác nhận không khớp.",
             ), 400
-        if not passwords.reset_password(
-            token, password, state
-        ):
+        if not passwords.reset_password(token, password, state):
             return render_template(
                 "reset_password.html",
                 reset_token=token,
@@ -325,6 +340,4 @@ def password_reset_form(token: str | None = None) -> str | Any:
             ), 400
         return redirect(url_for("web.login_form", password_reset="1"))
     valid_token = token != "" and passwords.is_reset_token_valid(token, state)
-    return render_template(
-        "reset_password.html", reset_token=token if valid_token else None
-    )
+    return render_template("reset_password.html", reset_token=token if valid_token else None)
