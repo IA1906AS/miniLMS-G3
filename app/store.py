@@ -3,20 +3,22 @@ import pathlib
 import secrets
 import sqlite3
 import threading
+import time
+from collections.abc import Callable
 from typing import Any
 
 import bcrypt
 
-
 db: dict[str, Any] | None = None
 
 
-def init(database_path: str = "lms.sqlite3") -> dict[str, Any]:
+def init(
+    database_path: str = "lms.sqlite3", clock: Callable[[], float] | None = None
+) -> dict[str, Any]:
     global db
 
-    connection = sqlite3.connect(
-        database_path, check_same_thread=False, isolation_level=None
-    )
+    now = clock if clock is not None else time.time
+    connection = sqlite3.connect(database_path, check_same_thread=False, isolation_level=None)
     connection.execute("PRAGMA foreign_keys = ON")
     connection.executescript(
         """
@@ -24,6 +26,7 @@ def init(database_path: str = "lms.sqlite3") -> dict[str, Any]:
             id TEXT PRIMARY KEY,
             email TEXT NOT NULL UNIQUE COLLATE NOCASE,
             name TEXT NOT NULL DEFAULT '',
+            bio TEXT NOT NULL DEFAULT '',
             role TEXT NOT NULL,
             pw_hash BLOB NOT NULL
         );
@@ -50,11 +53,27 @@ def init(database_path: str = "lms.sqlite3") -> dict[str, Any]:
             user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             PRIMARY KEY (provider, subject)
         );
+        CREATE TABLE IF NOT EXISTS outbox_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id TEXT NOT NULL UNIQUE,
+            type TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'PENDING',
+            attempts INTEGER NOT NULL DEFAULT 0,
+            next_attempt_at REAL NOT NULL,
+            locked_until REAL,
+            created_at REAL NOT NULL,
+            sent_at REAL,
+            last_error TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_outbox_due
+            ON outbox_events (status, next_attempt_at);
         """
     )
-    seed = json.loads(
-        (pathlib.Path(__file__).parent / "seed.json").read_text(encoding="utf-8")
-    )
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(users)")}
+    if "bio" not in columns:  # DB cũ tạo trước khi có cột bio
+        connection.execute("ALTER TABLE users ADD COLUMN bio TEXT NOT NULL DEFAULT ''")
+    seed = json.loads((pathlib.Path(__file__).parent / "seed.json").read_text(encoding="utf-8"))
     with connection:
         for user_data in seed["users"]:
             connection.execute(
@@ -66,9 +85,7 @@ def init(database_path: str = "lms.sqlite3") -> dict[str, Any]:
                     user_data["id"],
                     user_data["email"],
                     user_data["role"],
-                    bcrypt.hashpw(
-                        user_data["password"].encode("utf-8"), bcrypt.gensalt(rounds=10)
-                    ),
+                    bcrypt.hashpw(user_data["password"].encode("utf-8"), bcrypt.gensalt(rounds=10)),
                 ),
             )
         for course in seed["courses"]:
@@ -105,25 +122,23 @@ def init(database_path: str = "lms.sqlite3") -> dict[str, Any]:
         users[user["id"]] = user
     courses = {
         row[0]: {"id": row[0], "name": row[1], "instructorId": row[2]}
-        for row in connection.execute(
-            "SELECT id, name, instructor_id FROM courses"
-        )
+        for row in connection.execute("SELECT id, name, instructor_id FROM courses")
     }
     enrollments = {
         (row[0], row[1]): row[2]
-        for row in connection.execute(
-            "SELECT course_id, student_id, score FROM enrollments"
-        )
+        for row in connection.execute("SELECT course_id, student_id, score FROM enrollments")
     }
+    bios = {row[0]: row[1] for row in connection.execute("SELECT id, bio FROM users")}
     db = {
         "users": users,
         "by_email": {user["email"].lower(): user for user in users.values()},
         "courses": courses,
         "enrollments": enrollments,
+        "bios": bios,
         "attempts": {},
-        "dummy_pw_hash": bcrypt.hashpw(
-            b"not-a-real-account-password", bcrypt.gensalt(rounds=10)
-        ),
+        "tokens_valid_after": {},
+        "now": now,
+        "dummy_pw_hash": bcrypt.hashpw(b"not-a-real-account-password", bcrypt.gensalt(rounds=10)),
         "connection": connection,
         "lock": threading.RLock(),
     }
@@ -147,16 +162,12 @@ def refresh(state: dict[str, Any]) -> None:
         state["users"].clear()
         state["users"].update(users)
         state["by_email"].clear()
-        state["by_email"].update(
-            {user["email"].lower(): user for user in users.values()}
-        )
+        state["by_email"].update({user["email"].lower(): user for user in users.values()})
         state["courses"].clear()
         state["courses"].update(
             {
                 row[0]: {"id": row[0], "name": row[1], "instructorId": row[2]}
-                for row in connection.execute(
-                    "SELECT id, name, instructor_id FROM courses"
-                )
+                for row in connection.execute("SELECT id, name, instructor_id FROM courses")
             }
         )
         state["enrollments"].clear()
@@ -167,6 +178,10 @@ def refresh(state: dict[str, Any]) -> None:
                     "SELECT course_id, student_id, score FROM enrollments"
                 )
             }
+        )
+        state["bios"].clear()
+        state["bios"].update(
+            {row[0]: row[1] for row in connection.execute("SELECT id, bio FROM users")}
         )
 
 
@@ -203,6 +218,7 @@ def create_user(
             raise ValueError("Email address is already registered") from error
         state["users"][user["id"]] = user
         state["by_email"][email.lower()] = user
+        state["bios"][user["id"]] = ""
     return user
 
 
@@ -290,6 +306,7 @@ def get_or_create_oauth_user(
 
         state["users"][user["id"]] = user
         state["by_email"][email.lower()] = user
+        state["bios"].setdefault(user["id"], "")
         return user
 
 
@@ -342,9 +359,7 @@ def consume_password_reset(
                 connection.execute("ROLLBACK")
                 return False
             user_id = row[0]
-            password_hash = bcrypt.hashpw(
-                password.encode("utf-8"), bcrypt.gensalt(rounds=10)
-            )
+            password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt(rounds=10))
             connection.execute(
                 "UPDATE users SET pw_hash = ? WHERE id = ?",
                 (password_hash, user_id),
@@ -363,9 +378,7 @@ def consume_password_reset(
         return True
 
 
-def password_reset_is_valid(
-    state: dict[str, Any], token_hash: str, now: float
-) -> bool:
+def password_reset_is_valid(state: dict[str, Any], token_hash: str, now: float) -> bool:
     with state["lock"]:
         return (
             state["connection"]
@@ -400,3 +413,287 @@ def update_grade(
             connection.execute("ROLLBACK")
             raise
         state["enrollments"][(course_id, student_id)] = score
+
+
+def create_enrollment(
+    state: dict[str, Any],
+    *,
+    course_id: str,
+    student_id: str,
+    event: dict[str, Any],
+    now: float,
+) -> None:
+    """Insert the enrollment and its outbox event in one transaction."""
+    with state["lock"]:
+        connection = state["connection"]
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            connection.execute(
+                """
+                INSERT INTO enrollments (course_id, student_id, score)
+                VALUES (?, ?, ?)
+                """,
+                (course_id, student_id, 0.0),
+            )
+            connection.execute(
+                """
+                INSERT INTO outbox_events (
+                    event_id, type, payload, status, attempts,
+                    next_attempt_at, created_at
+                )
+                VALUES (?, ?, ?, 'PENDING', 0, ?, ?)
+                """,
+                (
+                    event["eventId"],
+                    event["type"],
+                    json.dumps(event["payload"], ensure_ascii=False),
+                    now,
+                    now,
+                ),
+            )
+            connection.execute("COMMIT")
+        except sqlite3.IntegrityError as error:
+            connection.execute("ROLLBACK")
+            raise ValueError("Enrollment already exists") from error
+        except sqlite3.Error:
+            connection.execute("ROLLBACK")
+            raise
+        state["enrollments"][(course_id, student_id)] = 0.0
+
+
+def recover_expired_outbox(state: dict[str, Any], now: float) -> int:
+    """Return crashed claims (SENDING past their lease) to the PENDING pool."""
+    with state["lock"]:
+        cursor = state["connection"].execute(
+            """
+            UPDATE outbox_events
+               SET status = 'PENDING', locked_until = NULL
+             WHERE status = 'SENDING'
+               AND locked_until IS NOT NULL
+               AND locked_until <= ?
+            """,
+            (now,),
+        )
+        return cursor.rowcount
+
+
+def claim_outbox_batch(
+    state: dict[str, Any], now: float, limit: int, lease_seconds: float
+) -> list[dict[str, Any]]:
+    """Atomically move due events to SENDING and return them.
+
+    The SELECT and the UPDATE share one BEGIN IMMEDIATE transaction, so a second
+    worker (in this process or another one) cannot claim the same rows.
+    """
+    with state["lock"]:
+        connection = state["connection"]
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            rows = connection.execute(
+                """
+                SELECT id, event_id, type, payload, attempts
+                  FROM outbox_events
+                 WHERE status = 'PENDING' AND next_attempt_at <= ?
+                 ORDER BY id
+                 LIMIT ?
+                """,
+                (now, limit),
+            ).fetchall()
+            if rows:
+                connection.executemany(
+                    """
+                    UPDATE outbox_events SET status = 'SENDING', locked_until = ?
+                     WHERE id = ? AND status = 'PENDING'
+                    """,
+                    [(now + lease_seconds, row[0]) for row in rows],
+                )
+            connection.execute("COMMIT")
+        except sqlite3.Error:
+            connection.execute("ROLLBACK")
+            raise
+    return [
+        {
+            "eventId": row[1],
+            "type": row[2],
+            "payload": json.loads(row[3]),
+            "attempts": row[4],
+        }
+        for row in rows
+    ]
+
+
+def mark_outbox_sent(state: dict[str, Any], event_id: str, now: float) -> None:
+    with state["lock"]:
+        state["connection"].execute(
+            """
+            UPDATE outbox_events
+               SET status = 'SENT', sent_at = ?, locked_until = NULL, last_error = NULL
+             WHERE event_id = ?
+            """,
+            (now, event_id),
+        )
+
+
+def mark_outbox_failed(
+    state: dict[str, Any],
+    event_id: str,
+    now: float,
+    error: str,
+    max_attempts: int,
+    retry_delay: float,
+) -> str:
+    with state["lock"]:
+        connection = state["connection"]
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            row = connection.execute(
+                "SELECT attempts FROM outbox_events WHERE event_id = ?",
+                (event_id,),
+            ).fetchone()
+            if row is None:
+                connection.execute("COMMIT")
+                return "MISSING"
+            attempts = row[0] + 1
+            status = "DEAD" if attempts >= max_attempts else "PENDING"
+            connection.execute(
+                """
+                UPDATE outbox_events
+                   SET status = ?, attempts = ?, next_attempt_at = ?,
+                       locked_until = NULL, last_error = ?
+                 WHERE event_id = ?
+                """,
+                (status, attempts, now + retry_delay, error, event_id),
+            )
+            connection.execute("COMMIT")
+        except sqlite3.Error:
+            connection.execute("ROLLBACK")
+            raise
+        return status
+
+
+def outbox_counts(state: dict[str, Any]) -> dict[str, int]:
+    with state["lock"]:
+        return {
+            row[0]: row[1]
+            for row in state["connection"].execute(
+                "SELECT status, COUNT(*) FROM outbox_events GROUP BY status"
+            )
+        }
+
+
+def add_enrollment(state: dict[str, Any], course_id: str, student_id: str) -> None:
+    with state["lock"]:
+        connection = state["connection"]
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            connection.execute(
+                """
+                INSERT INTO enrollments (course_id, student_id, score)
+                VALUES (?, ?, 0.0)
+                """,
+                (course_id, student_id),
+            )
+            connection.execute("COMMIT")
+        except sqlite3.IntegrityError as error:
+            connection.execute("ROLLBACK")
+            raise ValueError("Enrollment already exists") from error
+        except sqlite3.Error:
+            connection.execute("ROLLBACK")
+            raise
+        state["enrollments"][(course_id, student_id)] = 0.0
+
+
+def remove_enrollment(state: dict[str, Any], course_id: str, student_id: str) -> bool:
+    with state["lock"]:
+        connection = state["connection"]
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            cursor = connection.execute(
+                "DELETE FROM enrollments WHERE course_id = ? AND student_id = ?",
+                (course_id, student_id),
+            )
+            connection.execute("COMMIT")
+        except sqlite3.Error:
+            connection.execute("ROLLBACK")
+            raise
+        removed = cursor.rowcount > 0
+        if removed:
+            state["enrollments"].pop((course_id, student_id), None)
+        return removed
+
+
+def set_user_role(state: dict[str, Any], user_id: str, role: str) -> None:
+    with state["lock"]:
+        connection = state["connection"]
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            connection.execute("UPDATE users SET role = ? WHERE id = ?", (role, user_id))
+            connection.execute("COMMIT")
+        except sqlite3.Error:
+            connection.execute("ROLLBACK")
+            raise
+        user = state["users"].get(user_id)
+        if user is not None:
+            user["role"] = role
+
+
+def count_users_with_role(state: dict[str, Any], role: str) -> int:
+    with state["lock"]:
+        row = (
+            state["connection"]
+            .execute("SELECT COUNT(*) FROM users WHERE role = ?", (role,))
+            .fetchone()
+        )
+    return int(row[0]) if row is not None else 0
+
+
+def set_user_profile(
+    state: dict[str, Any],
+    user_id: str,
+    *,
+    name: str | None = None,
+    bio: str | None = None,
+) -> None:
+    assignments: list[str] = []
+    params: list[Any] = []
+    if name is not None:
+        assignments.append("name = ?")
+        params.append(name)
+    if bio is not None:
+        assignments.append("bio = ?")
+        params.append(bio)
+    if not assignments:
+        return
+    params.append(user_id)
+
+    with state["lock"]:
+        connection = state["connection"]
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            connection.execute(f"UPDATE users SET {', '.join(assignments)} WHERE id = ?", params)
+            connection.execute("COMMIT")
+        except sqlite3.Error:
+            connection.execute("ROLLBACK")
+            raise
+        user = state["users"].get(user_id)
+        if user is not None and name is not None:
+            user["name"] = name
+        if bio is not None:
+            state["bios"][user_id] = bio
+
+
+def update_password_hash(state: dict[str, Any], user_id: str, password_hash: bytes) -> None:
+    with state["lock"]:
+        connection = state["connection"]
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            connection.execute(
+                "UPDATE users SET pw_hash = ? WHERE id = ?", (password_hash, user_id)
+            )
+            connection.execute("COMMIT")
+        except sqlite3.Error:
+            connection.execute("ROLLBACK")
+            raise
+        user = state["users"].get(user_id)
+        if user is not None:
+            user["pw_hash"] = password_hash
