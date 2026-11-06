@@ -50,6 +50,7 @@ def init(
             course_id TEXT NOT NULL REFERENCES courses(id),
             student_id TEXT NOT NULL REFERENCES users(id),
             score REAL NOT NULL,
+            version INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (course_id, student_id)
         );
         CREATE TABLE IF NOT EXISTS password_reset_tokens (
@@ -126,6 +127,9 @@ def init(
         connection.execute("ALTER TABLE users ADD COLUMN bio TEXT NOT NULL DEFAULT ''")
     if "locked" not in columns:  # DB cũ tạo trước khi có cờ khoá
         connection.execute("ALTER TABLE users ADD COLUMN locked INTEGER NOT NULL DEFAULT 0")
+    enrollment_columns = {row[1] for row in connection.execute("PRAGMA table_info(enrollments)")}
+    if "version" not in enrollment_columns:  # DB cũ tạo trước khi có optimistic locking
+        connection.execute("ALTER TABLE enrollments ADD COLUMN version INTEGER NOT NULL DEFAULT 0")
     seed = json.loads((pathlib.Path(__file__).parent / "seed.json").read_text(encoding="utf-8"))
     with connection:
         for user_data in seed["users"]:
@@ -455,25 +459,87 @@ def password_reset_is_valid(state: dict[str, Any], token_hash: str, now: float) 
         )
 
 
-def update_grade(
-    state: dict[str, Any], course_id: str, student_id: str, score: int | float
-) -> None:
+def update_grade(state: dict[str, Any], course_id: str, student_id: str, score: int | float) -> int:
+    """Cập nhật kiểu last-write-wins (endpoint lõi) và tăng version."""
     with state["lock"]:
         connection = state["connection"]
         connection.execute("BEGIN IMMEDIATE")
         try:
             connection.execute(
                 """
-                UPDATE enrollments SET score = ?
+                UPDATE enrollments SET score = ?, version = version + 1
                 WHERE course_id = ? AND student_id = ?
                 """,
                 (score, course_id, student_id),
             )
+            row = connection.execute(
+                "SELECT version FROM enrollments WHERE course_id = ? AND student_id = ?",
+                (course_id, student_id),
+            ).fetchone()
             connection.execute("COMMIT")
         except sqlite3.Error:
             connection.execute("ROLLBACK")
             raise
         state["enrollments"][(course_id, student_id)] = score
+    return int(row[0]) if row is not None else 0
+
+
+def read_grade_version(
+    state: dict[str, Any], course_id: str, student_id: str
+) -> tuple[int | float, int] | None:
+    with state["lock"]:
+        row = (
+            state["connection"]
+            .execute(
+                "SELECT score, version FROM enrollments WHERE course_id = ? AND student_id = ?",
+                (course_id, student_id),
+            )
+            .fetchone()
+        )
+    return (row[0], int(row[1])) if row is not None else None
+
+
+def update_grade_if_version(
+    state: dict[str, Any],
+    course_id: str,
+    student_id: str,
+    score: int | float,
+    expected_version: int,
+) -> tuple[bool, int | None, int | float | None]:
+    """Trả (updated, new_version, current_score)."""
+    with state["lock"]:
+        connection = state["connection"]
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            cursor = connection.execute(
+                """
+                UPDATE enrollments SET score = ?, version = version + 1
+                 WHERE course_id = ? AND student_id = ? AND version = ?
+                """,
+                (score, course_id, student_id, expected_version),
+            )
+            if cursor.rowcount == 0:
+                row = connection.execute(
+                    """
+                    SELECT score, version FROM enrollments
+                     WHERE course_id = ? AND student_id = ?
+                    """,
+                    (course_id, student_id),
+                ).fetchone()
+                connection.execute("ROLLBACK")
+                if row is None:
+                    return False, None, None
+                return False, int(row[1]), row[0]
+            row = connection.execute(
+                "SELECT version FROM enrollments WHERE course_id = ? AND student_id = ?",
+                (course_id, student_id),
+            ).fetchone()
+            connection.execute("COMMIT")
+        except sqlite3.Error:
+            connection.execute("ROLLBACK")
+            raise
+        state["enrollments"][(course_id, student_id)] = score
+    return True, int(row[0]) if row is not None else expected_version + 1, score
 
 
 def create_enrollment(

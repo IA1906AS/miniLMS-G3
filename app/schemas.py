@@ -272,3 +272,12 @@ def parse_comment_body(body: Any) -> str:
     if not isinstance(body, dict) or set(body) != {"body"}:
         raise ValidationError()
     return _parse_text(body["body"], 2000)
+
+
+def parse_grade_v2_body(body: Any) -> tuple[int | float, int]:
+    if not isinstance(body, dict) or set(body) != {"score", "expectedVersion"}:
+        raise ValidationError()
+    expected = body["expectedVersion"]
+    if isinstance(expected, bool) or not isinstance(expected, int) or expected < 0:
+        raise ValidationError()
+    return validate_score(body["score"]), expected

@@ -113,6 +113,7 @@ Dữ liệu mẫu lấy từ `app/seed.json` (6 tài khoản, 2 khóa học). Tr
 | `POST|GET /courses/<id>/announcements`, `DELETE /announcements/<id>` | thông báo lớp (bước 3.5) |
 | `POST|GET /courses/<id>/threads`, `DELETE /threads/<id>` | thảo luận lớp |
 | `POST|GET /threads/<id>/comments`, `DELETE /comments/<id>` | bình luận (văn bản thuần) |
+| `GET|PUT /courses/<id>/grades/<sid>/v2` | sửa điểm có `expectedVersion`, lệch → 409 (bước 3.6) |
 | `POST /auth/logout` | vô hiệu token hiện tại (mọi vai trò) |
 | `POST /me/password`, `GET`, `PUT /users/me` | đổi mật khẩu, xem/sửa hồ sơ (bước 3.1) |
 | `POST /me/enrollments` `{"courseId": ...}` | sinh viên tự đăng ký (kèm outbox) |
@@ -168,7 +169,7 @@ Thiết kế, tiêu chí nghiệm thu và kịch bản demo:
 | GĐ3 bước 3.3: khoá tài khoản, audit API | Xong | [ADR 0010](docs/decisions/0010-khoa-tai-khoan.md) |
 | GĐ3 bước 3.4: bài tập, nộp bài, hạn nộp | Xong | [ADR 0011](docs/decisions/0011-bai-tap-nop-bai.md) |
 | GĐ3 bước 3.5: thông báo, thảo luận | Xong | [ADR 0012](docs/decisions/0012-dien-dan-thong-bao.md) |
-| GĐ3 bước 3.6: optimistic locking (tuỳ chọn) | Chưa làm | chờ duyệt |
+| GĐ3 bước 3.6: optimistic locking (tuỳ chọn) | Xong | [ADR 0013](docs/decisions/0013-optimistic-locking-diem.md) |
 | Quality gate + CI | Xong | [ADR 0006](docs/decisions/0006-quality-gate-2-tang.md) |
 | Pattern #3: optimistic locking khi sửa điểm | Chưa làm | kế hoạch trong tài liệu pattern |
 | UI quản trị người dùng/ghi danh | Chưa làm | mới có API |
