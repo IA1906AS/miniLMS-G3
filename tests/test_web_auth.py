@@ -6,7 +6,6 @@ import pytest
 from app import create_app, emailer
 from app import oauth as oauth_module
 
-
 SECRET = "unit-test-secret-with-at-least-32-characters"
 
 
@@ -33,9 +32,7 @@ def client(app):
 
 
 def csrf(response):
-    match = re.search(
-        r'name="csrf_token" value="([^"]+)"', response.get_data(as_text=True)
-    )
+    match = re.search(r'name="csrf_token" value="([^"]+)"', response.get_data(as_text=True))
     assert match is not None
     return match.group(1)
 
@@ -61,10 +58,14 @@ def test_home_register_and_account_pages_are_connected_to_sqlite(client, app):
     stored = app.extensions["lms_store"]["by_email"]["new.student@example.com"]
     assert stored["role"] == "STUDENT"
     assert stored["pw_hash"] != b"SecurePass123"
-    persisted = app.extensions["lms_store"]["connection"].execute(
-        "SELECT email, name, role FROM users WHERE email = ?",
-        ("new.student@example.com",),
-    ).fetchone()
+    persisted = (
+        app.extensions["lms_store"]["connection"]
+        .execute(
+            "SELECT email, name, role FROM users WHERE email = ?",
+            ("new.student@example.com",),
+        )
+        .fetchone()
+    )
     assert persisted == ("new.student@example.com", "Nguyen Van A", "STUDENT")
 
 
@@ -110,24 +111,33 @@ def test_registration_and_password_reset_api_flow(client, monkeypatch):
         headers={"X-CSRF-Token": csrf_token},
     )
     assert reset.status_code == 200
-    assert client.post(
-        "/auth/password-reset/confirm",
-        json={"token": reset_token, "password": "AnotherPass789"},
-        headers={"X-CSRF-Token": csrf_token},
-    ).status_code == 400
-    assert client.post(
-        "/auth/login",
-        json={
-            "email": "api.student@example.com",
-            "password": "NewSecurePass456",
-        },
-        headers={"X-CSRF-Token": csrf_token},
-    ).status_code == 200
-    assert client.post(
-        "/auth/login",
-        json={"email": "api.student@example.com", "password": "SecurePass123"},
-        headers={"X-CSRF-Token": csrf_token},
-    ).status_code == 401
+    assert (
+        client.post(
+            "/auth/password-reset/confirm",
+            json={"token": reset_token, "password": "AnotherPass789"},
+            headers={"X-CSRF-Token": csrf_token},
+        ).status_code
+        == 400
+    )
+    assert (
+        client.post(
+            "/auth/login",
+            json={
+                "email": "api.student@example.com",
+                "password": "NewSecurePass456",
+            },
+            headers={"X-CSRF-Token": csrf_token},
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            "/auth/login",
+            json={"email": "api.student@example.com", "password": "SecurePass123"},
+            headers={"X-CSRF-Token": csrf_token},
+        ).status_code
+        == 401
+    )
 
 
 def test_registered_account_persists_after_app_restart(tmp_path):
@@ -298,22 +308,19 @@ def test_oauth_login_creates_and_reuses_verified_provider_identity(
         authorization = urlparse(started.headers["Location"])
         query = parse_qs(authorization.query)
         assert query["code_challenge_method"] == ["S256"]
-        assert query["redirect_uri"] == [
-            f"http://localhost:5000/oauth/{provider}/callback"
-        ]
+        assert query["redirect_uri"] == [f"http://localhost:5000/oauth/{provider}/callback"]
         callback = client.get(
             f"/oauth/{provider}/callback?code=provider-code&state={query['state'][0]}"
         )
         assert callback.status_code == 302
         assert callback.headers["Location"] == "/"
+
     complete_login()
     state = app.extensions["lms_store"]
-    oauth_rows = state["connection"].execute(
-        "SELECT provider, subject FROM oauth_accounts"
-    ).fetchall()
-    assert oauth_rows == [
-        (provider, "google-user-42" if provider == "google" else "8042")
-    ]
+    oauth_rows = (
+        state["connection"].execute("SELECT provider, subject FROM oauth_accounts").fetchall()
+    )
+    assert oauth_rows == [(provider, "google-user-42" if provider == "google" else "8042")]
     account = client.get("/account")
     assert account.status_code == 200
     assert "oauth.student@example.com" in account.get_data(as_text=True)
@@ -324,16 +331,13 @@ def test_oauth_login_creates_and_reuses_verified_provider_identity(
     assert state["connection"].execute("SELECT COUNT(*) FROM users").fetchone()[0] == 7
     assert len(calls) == (4 if provider == "google" else 6)
     assert all(
-        kwargs.get("headers", {}).get("Authorization")
-        == "Bearer provider-access-token"
+        kwargs.get("headers", {}).get("Authorization") == "Bearer provider-access-token"
         for url, kwargs in calls
         if url != provider_urls[provider]
     )
 
 
-def test_oauth_callback_rejects_state_mismatch_without_provider_request(
-    client, monkeypatch
-):
+def test_oauth_callback_rejects_state_mismatch_without_provider_request(client, monkeypatch):
     called = False
 
     def fail_if_called(*args, **kwargs):
@@ -365,10 +369,11 @@ def test_oauth_does_not_automatically_link_an_existing_email(client, app, monkey
     state = parse_qs(urlparse(start.headers["Location"]).query)["state"][0]
     callback = client.get(f"/oauth/google/callback?code=code&state={state}")
     assert callback.headers["Location"] == "/login"
-    assert app.extensions["lms_store"]["connection"].execute(
-        "SELECT COUNT(*) FROM oauth_accounts"
-    ).fetchone()[0] == 0
-    login_page = client.get("/login")
-    assert "Hãy đăng nhập bằng email và mật khẩu hiện tại." in login_page.get_data(
-        as_text=True
+    assert (
+        app.extensions["lms_store"]["connection"]
+        .execute("SELECT COUNT(*) FROM oauth_accounts")
+        .fetchone()[0]
+        == 0
     )
+    login_page = client.get("/login")
+    assert "Hãy đăng nhập bằng email và mật khẩu hiện tại." in login_page.get_data(as_text=True)

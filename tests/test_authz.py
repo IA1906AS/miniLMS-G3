@@ -6,12 +6,11 @@ import pytest
 from flask import abort, jsonify
 
 from app import create_app
-from app.errors import Forbidden, NotFound, Unauthenticated, ValidationError
 from app import store as store_module
+from app.errors import Forbidden, NotFound, Unauthenticated, ValidationError
 from app.guards import require_role
 from app.schemas import validate_grade_body, validate_score
 from app.services import update_grade, using_store
-
 
 SECRET = "unit-test-secret-with-at-least-32-characters"
 
@@ -38,9 +37,7 @@ def client(app):
 
 
 def login(client, email, password="Lms@2026"):
-    response = client.post(
-        "/auth/login", json={"email": email, "password": password}
-    )
+    response = client.post("/auth/login", json={"email": email, "password": password})
     assert response.status_code == 200
     return response.get_json()["accessToken"]
 
@@ -71,13 +68,13 @@ def test_A2_me_requires_a_token(client):
 def test_A3_changing_subject_without_resigning_is_rejected(client):
     token = login(client, "chi.sv@lms.test")
     header, payload, signature = token.split(".")
-    claims = json.loads(
-        base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4))
-    )
+    claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
     claims["sub"] = "u1"
-    changed_payload = base64.urlsafe_b64encode(
-        json.dumps(claims, separators=(",", ":")).encode()
-    ).rstrip(b"=").decode()
+    changed_payload = (
+        base64.urlsafe_b64encode(json.dumps(claims, separators=(",", ":")).encode())
+        .rstrip(b"=")
+        .decode()
+    )
     forged = f"{header}.{changed_payload}.{signature}"
 
     response = client.get("/me", headers=auth(forged))
@@ -88,9 +85,7 @@ def test_A3_changing_subject_without_resigning_is_rejected(client):
 def test_A4_none_algorithm_token_is_rejected(client):
     token = login(client, "chi.sv@lms.test")
     _, payload, _ = token.split(".")
-    none_header = base64.urlsafe_b64encode(
-        b'{"alg":"none","typ":"JWT"}'
-    ).rstrip(b"=").decode()
+    none_header = base64.urlsafe_b64encode(b'{"alg":"none","typ":"JWT"}').rstrip(b"=").decode()
     unsigned = f"{none_header}.{payload}."
 
     response = client.get("/me", headers=auth(unsigned))
@@ -147,27 +142,21 @@ def test_A8_student_not_enrolled_in_course_is_forbidden(client):
 
 def test_A9_student_cannot_update_grade(client):
     token = login(client, "chi.sv@lms.test")
-    response = client.put(
-        "/courses/c1/grades/u4", json={"score": 10}, headers=auth(token)
-    )
+    response = client.put("/courses/c1/grades/u4", json={"score": 10}, headers=auth(token))
     assert response.status_code == 403
     assert response.get_json() == {"error": "FORBIDDEN"}
 
 
 def test_A10_other_instructor_cannot_update_grade(client):
     token = login(client, "binh.gv@lms.test")
-    response = client.put(
-        "/courses/c1/grades/u4", json={"score": 0}, headers=auth(token)
-    )
+    response = client.put("/courses/c1/grades/u4", json={"score": 0}, headers=auth(token))
     assert response.status_code == 403
     assert response.get_json() == {"error": "FORBIDDEN"}
 
 
 def test_A11_admin_cannot_update_grade(client):
     token = login(client, "admin@lms.test")
-    response = client.put(
-        "/courses/c1/grades/u4", json={"score": 10}, headers=auth(token)
-    )
+    response = client.put("/courses/c1/grades/u4", json={"score": 10}, headers=auth(token))
     assert response.status_code == 403
     assert response.get_json() == {"error": "FORBIDDEN"}
 
@@ -187,9 +176,7 @@ def test_A11_admin_cannot_update_grade(client):
 )
 def test_A12_invalid_score_bodies_are_rejected(client, body):
     token = login(client, "an.gv@lms.test")
-    response = client.put(
-        "/courses/c1/grades/u4", json=body, headers=auth(token)
-    )
+    response = client.put("/courses/c1/grades/u4", json=body, headers=auth(token))
     assert response.status_code == 400
     assert response.get_json() == {"error": "VALIDATION_ERROR"}
 
@@ -211,9 +198,7 @@ def test_score_schema_rejects_bool_and_extra_or_missing_fields():
 
 def test_A13_instructor_cannot_update_unenrolled_student(client):
     token = login(client, "an.gv@lms.test")
-    response = client.put(
-        "/courses/c1/grades/u6", json={"score": 5}, headers=auth(token)
-    )
+    response = client.put("/courses/c1/grades/u6", json={"score": 5}, headers=auth(token))
     assert response.status_code == 404
     assert response.get_json() == {"error": "NOT_FOUND"}
 
@@ -253,9 +238,8 @@ def test_A15_removing_route_guard_and_direct_service_call_stay_safe(app):
 
 def test_update_service_checks_course_before_actor_role(app):
     student = {"id": "u4", "email": "chi.sv@lms.test", "role": "STUDENT"}
-    with using_store(app.extensions["lms_store"]):
-        with pytest.raises(NotFound):
-            update_grade(student, "missing-course", "u4", 10)
+    with using_store(app.extensions["lms_store"]), pytest.raises(NotFound):
+        update_grade(student, "missing-course", "u4", 10)
 
 
 def test_A16_new_route_without_guard_still_requires_authentication(app):
@@ -284,9 +268,8 @@ def test_gate_authenticates_unknown_routes_before_404(app):
 
 def test_role_guard_rejects_request_without_actor(app):
     guarded = require_role("ADMIN")(lambda: jsonify({"ok": True}))
-    with app.test_request_context("/guarded"):
-        with pytest.raises(Unauthenticated):
-            guarded()
+    with app.test_request_context("/guarded"), pytest.raises(Unauthenticated):
+        guarded()
 
 
 def test_A17_missing_secret_prevents_app_creation(monkeypatch):
@@ -315,16 +298,12 @@ def test_A18_fifth_failure_locks_account_even_for_correct_password(client):
 def test_failed_attempts_are_counted_for_unknown_emails(client, app):
     email = "not-a-real-account@lms.test"
     for _ in range(5):
-        response = client.post(
-            "/auth/login", json={"email": email, "password": "wrong-password"}
-        )
+        response = client.post("/auth/login", json={"email": email, "password": "wrong-password"})
         assert response.status_code == 401
         assert response.get_json() == {"error": "INVALID_CREDENTIALS"}
 
     assert app.extensions["lms_store"]["attempts"][email]["fails"] == 5
-    locked = client.post(
-        "/auth/login", json={"email": email, "password": "wrong-password"}
-    )
+    locked = client.post("/auth/login", json={"email": email, "password": "wrong-password"})
     assert locked.status_code == 429
     assert locked.get_json() == {"error": "ACCOUNT_LOCKED"}
 
@@ -332,9 +311,7 @@ def test_failed_attempts_are_counted_for_unknown_emails(client, app):
 def test_successful_login_resets_failed_attempt_counter(client, app):
     email = "chi.sv@lms.test"
     for _ in range(4):
-        response = client.post(
-            "/auth/login", json={"email": email, "password": "wrong-password"}
-        )
+        response = client.post("/auth/login", json={"email": email, "password": "wrong-password"})
         assert response.status_code == 401
 
     assert app.extensions["lms_store"]["attempts"][email]["fails"] == 4
@@ -402,9 +379,7 @@ def test_http_exception_403_is_audited_once(app):
         methods=["GET"],
     )
     token = login(app.test_client(), "chi.sv@lms.test")
-    response = app.test_client().get(
-        "/explicit-forbidden", headers=auth(token)
-    )
+    response = app.test_client().get("/explicit-forbidden", headers=auth(token))
     assert response.status_code == 403
     audit_path = app.extensions["lms_store"]["audit_log_path"]
     with open(audit_path, encoding="utf-8") as audit_file:
@@ -416,9 +391,8 @@ def test_http_exception_403_is_audited_once(app):
 
 def test_score_validation_is_repeated_inside_service(app):
     instructor = {"id": "u2", "email": "an.gv@lms.test", "role": "INSTRUCTOR"}
-    with using_store(app.extensions["lms_store"]):
-        with pytest.raises(ValidationError):
-            update_grade(instructor, "c1", "u4", float("nan"))
+    with using_store(app.extensions["lms_store"]), pytest.raises(ValidationError):
+        update_grade(instructor, "c1", "u4", float("nan"))
 
 
 def test_config_dict_overrides_environment(app, tmp_path):
@@ -440,8 +414,7 @@ def test_create_app_loads_independent_seed_state(tmp_path):
     assert first_store is not second_store
     assert store_module.db is second_store
     assert all(
-        set(user) == {"id", "email", "role", "pw_hash"}
-        and user["pw_hash"].startswith(b"$2b$10$")
+        set(user) == {"id", "email", "role", "pw_hash"} and user["pw_hash"].startswith(b"$2b$10$")
         for user in first_store["users"].values()
     )
     first_store["enrollments"][("c1", "u4")] = 1
