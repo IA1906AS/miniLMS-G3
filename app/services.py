@@ -1,7 +1,6 @@
-import time
 from typing import Any
 
-from . import audit, outbox, schemas
+from . import audit, emailer, schemas
 from . import store as store_module
 from .errors import Conflict, Forbidden, NotFound
 from .runtime import current_store as _store
@@ -99,8 +98,12 @@ def update_grade(
         return {"courseId": course_id, "studentId": student_id, "score": score}
 
 
-def enroll_in_course(actor: dict[str, Any], course_id: str) -> dict[str, Any]:
-    """Enroll the acting student and queue the confirmation email atomically."""
+def enroll_in_course(actor: dict[str, Any], course_id: str, config: Any) -> dict[str, Any]:
+    """Đăng ký học phần rồi gửi email xác nhận ngay trong request (bản Before, chưa có outbox).
+
+    Hai lần ghi (PostgreSQL rồi SMTP) không nằm trong cùng một transaction: nếu SMTP lỗi thì
+    đăng ký đã commit nhưng email bị mất và không có cơ chế gửi lại.
+    """
     store = _store()
     with store["lock"]:
         course = _course(course_id)
@@ -113,38 +116,32 @@ def enroll_in_course(actor: dict[str, Any], course_id: str) -> dict[str, Any]:
 
         user = store["users"].get(student_id) or {}
         student_email = actor.get("email") or user.get("email") or ""
-        event = outbox.new_event(
-            outbox.EVENT_ENROLLMENT_CONFIRMED,
-            outbox.enrollment_confirmation_payload(
-                student_id=student_id,
-                student_email=str(student_email),
-                student_name=str(user.get("name", "")),
-                course_id=course_id,
-                course_name=str(course["name"]),
-            ),
-        )
         try:
-            store_module.create_enrollment(
-                store,
-                course_id=course_id,
-                student_id=student_id,
-                event=event,
-                now=time.time(),
-            )
+            store_module.add_enrollment(store, course_id, student_id)
         except ValueError as error:
             raise Conflict() from error
+
+        student_name = str(user.get("name") or "").strip()
+        greeting = f"Chào {student_name}," if student_name else "Chào bạn,"
+        body = (
+            f"{greeting}\n\n"
+            f'Bạn đã đăng ký thành công khóa học "{course["name"]}" '
+            f"(mã khóa học: {course_id}).\n"
+            "Điểm của bạn hiện là 0.0 và sẽ được giảng viên cập nhật trong khóa học.\n\n"
+            "Nếu bạn không thực hiện đăng ký này, hãy liên hệ quản trị viên.\n"
+        )
+        emailer.send_email(
+            config,
+            str(student_email),
+            f"Xác nhận đăng ký khóa học {course['name']}",
+            body,
+        )
 
         audit.record(
             student_id,
             "ENROLL_COURSE",
             f"/courses/{course_id}/enrollments",
             "OK",
-            eventId=event["eventId"],
             path=store["audit_log_path"],
         )
-        return {
-            "courseId": course_id,
-            "studentId": student_id,
-            "score": 0.0,
-            "outboxEventId": event["eventId"],
-        }
+        return {"courseId": course_id, "studentId": student_id, "score": 0.0}

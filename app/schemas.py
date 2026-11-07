@@ -391,12 +391,3 @@ def parse_quiz_submit_body(body: Any) -> dict[str, int]:
             raise ValidationError()
         answers[q_id] = opt
     return answers
-
-
-def parse_grade_v2_body(body: Any) -> tuple[int | float, int]:
-    if not isinstance(body, dict) or set(body) != {"score", "expectedVersion"}:
-        raise ValidationError()
-    expected = body["expectedVersion"]
-    if isinstance(expected, bool) or not isinstance(expected, int) or expected < 0:
-        raise ValidationError()
-    return validate_score(body["score"]), expected

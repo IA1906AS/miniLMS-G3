@@ -73,7 +73,6 @@ def init(database_url: str, clock: Callable[[], float] | None = None) -> dict[st
             course_id TEXT NOT NULL REFERENCES courses(id),
             student_id TEXT NOT NULL REFERENCES users(id),
             score DOUBLE PRECISION NOT NULL,
-            version INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (course_id, student_id)
         );
         CREATE TABLE IF NOT EXISTS password_reset_tokens (
@@ -193,9 +192,6 @@ def init(database_url: str, clock: Callable[[], float] | None = None) -> dict[st
         connection.execute("ALTER TABLE users ADD COLUMN locked INTEGER NOT NULL DEFAULT 0")
     if "avatar_path" not in columns:
         connection.execute("ALTER TABLE users ADD COLUMN avatar_path TEXT NOT NULL DEFAULT ''")
-    enrollment_columns = {row[1] for row in _table_columns(connection, "enrollments")}
-    if "version" not in enrollment_columns:  # DB cũ tạo trước khi có optimistic locking
-        connection.execute("ALTER TABLE enrollments ADD COLUMN version INTEGER NOT NULL DEFAULT 0")
     sub_cols = {row[1] for row in _table_columns(connection, "submissions")}
     if "file_name" not in sub_cols:
         connection.execute("ALTER TABLE submissions ADD COLUMN file_name TEXT NOT NULL DEFAULT ''")
@@ -562,133 +558,23 @@ def password_reset_is_valid(state: dict[str, Any], token_hash: str, now: float) 
         )
 
 
-def update_grade(state: dict[str, Any], course_id: str, student_id: str, score: int | float) -> int:
-    """Cập nhật kiểu last-write-wins (endpoint lõi) và tăng version."""
+def update_grade(
+    state: dict[str, Any], course_id: str, student_id: str, score: int | float
+) -> None:
+    """Ghi đè điểm vô điều kiện (last-write-wins) — bản Before, chưa có optimistic locking."""
     with state["lock"]:
         connection = state["connection"]
         connection.execute("BEGIN")
         try:
             connection.execute(
-                """
-                UPDATE enrollments SET score = %s, version = version + 1
-                WHERE course_id = %s AND student_id = %s
-                """,
+                "UPDATE enrollments SET score = %s WHERE course_id = %s AND student_id = %s",
                 (score, course_id, student_id),
             )
-            row = connection.execute(
-                "SELECT version FROM enrollments WHERE course_id = %s AND student_id = %s",
-                (course_id, student_id),
-            ).fetchone()
             connection.execute("COMMIT")
         except psycopg.Error:
             connection.execute("ROLLBACK")
             raise
         state["enrollments"][(course_id, student_id)] = score
-    return int(row[0]) if row is not None else 0
-
-
-def read_grade_version(
-    state: dict[str, Any], course_id: str, student_id: str
-) -> tuple[int | float, int] | None:
-    with state["lock"]:
-        row = (
-            state["connection"]
-            .execute(
-                "SELECT score, version FROM enrollments WHERE course_id = %s AND student_id = %s",
-                (course_id, student_id),
-            )
-            .fetchone()
-        )
-    return (row[0], int(row[1])) if row is not None else None
-
-
-def update_grade_if_version(
-    state: dict[str, Any],
-    course_id: str,
-    student_id: str,
-    score: int | float,
-    expected_version: int,
-) -> tuple[bool, int | None, int | float | None]:
-    """Trả (updated, new_version, current_score)."""
-    with state["lock"]:
-        connection = state["connection"]
-        connection.execute("BEGIN")
-        try:
-            cursor = connection.execute(
-                """
-                UPDATE enrollments SET score = %s, version = version + 1
-                 WHERE course_id = %s AND student_id = %s AND version = %s
-                """,
-                (score, course_id, student_id, expected_version),
-            )
-            if cursor.rowcount == 0:
-                row = connection.execute(
-                    """
-                    SELECT score, version FROM enrollments
-                     WHERE course_id = %s AND student_id = %s
-                    """,
-                    (course_id, student_id),
-                ).fetchone()
-                connection.execute("ROLLBACK")
-                if row is None:
-                    return False, None, None
-                return False, int(row[1]), row[0]
-            row = connection.execute(
-                "SELECT version FROM enrollments WHERE course_id = %s AND student_id = %s",
-                (course_id, student_id),
-            ).fetchone()
-            connection.execute("COMMIT")
-        except psycopg.Error:
-            connection.execute("ROLLBACK")
-            raise
-        state["enrollments"][(course_id, student_id)] = score
-    return True, int(row[0]) if row is not None else expected_version + 1, score
-
-
-def create_enrollment(
-    state: dict[str, Any],
-    *,
-    course_id: str,
-    student_id: str,
-    event: dict[str, Any],
-    now: float,
-) -> None:
-    """Insert the enrollment and its outbox event in one transaction."""
-    with state["lock"]:
-        connection = state["connection"]
-        connection.execute("BEGIN")
-        try:
-            connection.execute(
-                """
-                INSERT INTO enrollments (course_id, student_id, score)
-                VALUES (%s, %s, %s)
-                """,
-                (course_id, student_id, 0.0),
-            )
-            connection.execute(
-                """
-                INSERT INTO outbox_events (
-                    event_id, type, payload, status, attempts,
-                    next_attempt_at, created_at
-                )
-                VALUES (%s, %s, %s, 'PENDING', 0, %s, %s)
-                """,
-                (
-                    event["eventId"],
-                    event["type"],
-                    json.dumps(event["payload"], ensure_ascii=False),
-                    now,
-                    now,
-                ),
-            )
-            connection.execute("COMMIT")
-        except psycopg.IntegrityError as error:
-            connection.execute("ROLLBACK")
-            raise ValueError("Enrollment already exists") from error
-        except psycopg.Error:
-            connection.execute("ROLLBACK")
-            raise
-        state["enrollments"][(course_id, student_id)] = 0.0
 
 
 def recover_expired_outbox(state: dict[str, Any], now: float) -> int:
