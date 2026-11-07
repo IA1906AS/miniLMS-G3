@@ -191,6 +191,20 @@ Thiết kế, tiêu chí nghiệm thu và kịch bản demo:
 | UI quản trị người dùng/ghi danh | Chưa làm | mới có API |
 | Worker outbox chạy nền mặc định | Chưa bật | cần `OUTBOX_POLL_INTERVAL > 0` hoặc cron `flask outbox drain` |
 
+## 7b. Giao diện web (client)
+
+Ngoài REST API, các trang HTML phục vụ đặc tả tính năng nằm dưới tiền tố `/ui`:
+
+| Trang | Đường dẫn | Vai trò |
+|---|---|---|
+| Danh sách + tìm kiếm khoá học | `/ui/courses` | Tất cả |
+| Chi tiết khoá học (thành viên, tài liệu, thông báo, bài tập, quiz, diễn đàn) | `/ui/courses/<id>` | Thành viên khoá học |
+| Hồ sơ, ảnh đại diện, đổi mật khẩu | `/account` | Tất cả |
+| Bài tập + nộp bài + chấm điểm | `/ui/assignments/<id>` | SV/GV |
+| Quiz + làm bài | `/ui/quizzes/<id>` | SV/GV |
+| Chủ đề + bình luận | `/ui/threads/<id>` | Thành viên |
+| Quản trị người dùng + nhật ký | `/ui/admin` | ADMIN |
+
 ## 8. Tài liệu
 
 | File | Nội dung |

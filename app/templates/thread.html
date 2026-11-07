@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}{{ thread.title }} | LMS{% endblock %}
+{% block content %}
+  <section class="section-head">
+    <div>
+      <p class="eyebrow">DIỄN ĐÀN</p>
+      <h1>{{ thread.title }}</h1>
+      <p><small>{{ thread.createdAt|dt }}</small></p>
+    </div>
+    <a class="button secondary" href="{{ url_for('web.course_detail', course_id=thread.courseId) }}">Về khoá học</a>
+  </section>
+
+  <section class="section">
+    <article class="card">
+      <p>{{ thread.body }}</p>
+      {% if user.id == thread.createdBy or can_manage %}
+        <form method="post" action="{{ url_for('web.update_thread_form', thread_id=thread.id) }}" class="stack">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input name="title" value="{{ thread.title }}" maxlength="200" required>
+          <textarea name="body" rows="3" maxlength="5000" required>{{ thread.body }}</textarea>
+          <button type="submit">Lưu thay đổi</button>
+        </form>
+        <form method="post" action="{{ url_for('web.delete_thread_form', thread_id=thread.id) }}" class="inline-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="danger">Xoá chủ đề</button>
+        </form>
+      {% endif %}
+    </article>
+  </section>
+
+  <section class="section">
+    <h2>Bình luận ({{ comments|length }})</h2>
+    <ul class="list">
+      {% for comment in comments %}
+        <li>
+          <p>{{ comment.body }}</p>
+          <small>{{ comment.createdBy }} · {{ comment.createdAt|dt }}</small>
+          {% if user.id == comment.createdBy or can_manage %}
+            <form method="post" action="{{ url_for('web.update_comment_form', comment_id=comment.id) }}" class="inline-form">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input name="body" value="{{ comment.body }}" maxlength="2000" required>
+              <button type="submit">Sửa</button>
+            </form>
+            <form method="post" action="{{ url_for('web.delete_comment_form', comment_id=comment.id) }}" class="inline-form">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="link-button">Xoá</button>
+            </form>
+          {% endif %}
+        </li>
+      {% else %}
+        <li>Chưa có bình luận.</li>
+      {% endfor %}
+    </ul>
+    <form method="post" action="{{ url_for('web.create_comment_form', thread_id=thread.id) }}" class="stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <textarea name="body" rows="2" maxlength="2000" placeholder="Viết bình luận" required></textarea>
+      <button type="submit">Gửi bình luận</button>
+    </form>
+  </section>
+{% endblock %}

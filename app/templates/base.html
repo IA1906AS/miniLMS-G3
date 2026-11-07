@@ -11,8 +11,12 @@
       <header class="topbar">
         <a class="brand" href="{{ url_for('web.home') }}">LMS</a>
         <nav>
-          {% if session.get('user_id') %}
+          {% if current_user %}
+            <a href="{{ url_for('web.courses_list') }}">Khoá học</a>
             <a href="{{ url_for('web.account') }}">Tài khoản</a>
+            {% if current_user.role == "ADMIN" %}
+              <a href="{{ url_for('web.admin_panel') }}">Quản trị</a>
+            {% endif %}
             <form class="inline-form" method="post" action="{{ url_for('web.logout') }}">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <button class="nav-button" type="submit">Đăng xuất</button>

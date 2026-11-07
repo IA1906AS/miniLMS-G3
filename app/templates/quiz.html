@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}{{ quiz.title }} | LMS{% endblock %}
+{% block content %}
+  <section class="section-head">
+    <div>
+      <p class="eyebrow">BÀI KIỂM TRA</p>
+      <h1>{{ quiz.title }}</h1>
+      <p>{{ quiz.durationMinutes }} phút · tối đa {{ quiz.maxAttempts }} lượt</p>
+    </div>
+    <a class="button secondary" href="{{ url_for('web.course_detail', course_id=quiz.courseId) }}">Về khoá học</a>
+  </section>
+
+  {% if quiz.description %}<p>{{ quiz.description }}</p>{% endif %}
+
+  {% if can_manage %}
+    <section class="section">
+      <h2>Câu hỏi</h2>
+      <ol class="list">
+        {% for question in quiz.questions %}
+          <li>
+            <strong>{{ question.question }}</strong>
+            <ul>
+              {% for option in question.options %}
+                <li>{{ option }}{% if loop.index0 == question.correctOption %} <span class="badge">đúng</span>{% endif %}</li>
+              {% endfor %}
+            </ul>
+          </li>
+        {% endfor %}
+      </ol>
+      <form method="post" action="{{ url_for('web.delete_quiz_form', quiz_id=quiz.id) }}" class="inline-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="danger">Xoá quiz</button>
+      </form>
+    </section>
+
+    <section class="section">
+      <h2>Lượt làm bài ({{ attempts|length }})</h2>
+      <table>
+        <thead><tr><th>Sinh viên</th><th>Lượt</th><th>Bắt đầu</th><th>Nộp</th><th>Điểm</th></tr></thead>
+        <tbody>
+          {% for attempt in attempts %}
+            <tr>
+              <td>{{ attempt.studentId }}</td>
+              <td>{{ attempt.attemptNumber }}</td>
+              <td>{{ attempt.startedAt|dt }}</td>
+              <td>{{ attempt.submittedAt|dt if attempt.submittedAt else "—" }}</td>
+              <td>{{ attempt.score if attempt.score is not none else "—" }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="5">Chưa có lượt làm bài.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+  {% else %}
+    <section class="section">
+      <h2>Lượt làm bài của tôi</h2>
+      <table>
+        <thead><tr><th>Lượt</th><th>Bắt đầu</th><th>Nộp</th><th>Điểm</th></tr></thead>
+        <tbody>
+          {% for attempt in attempts %}
+            <tr>
+              <td>{{ attempt.attemptNumber }}</td>
+              <td>{{ attempt.startedAt|dt }}</td>
+              <td>{{ attempt.submittedAt|dt if attempt.submittedAt else "—" }}</td>
+              <td>{{ attempt.score if attempt.score is not none else "—" }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="4">Bạn chưa làm bài.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% if attempts|length < quiz.maxAttempts or attempts|selectattr("submittedAt", "none")|list %}
+        <form method="post" action="{{ url_for('web.start_quiz_attempt', quiz_id=quiz.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit">Bắt đầu làm bài</button>
+        </form>
+      {% endif %}
+    </section>
+  {% endif %}
+{% endblock %}

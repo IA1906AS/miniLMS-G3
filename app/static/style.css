@@ -354,3 +354,47 @@ a { color: #3456d1; }
 @media (prefers-reduced-motion: reduce) {
   .input-wrap input, .auth-submit { transition: none; }
 }
+
+/* ---------- Khối giao diện học tập (form, bảng, danh sách) ---------- */
+.page input, .page select, .page textarea {
+  padding: 10px 12px;
+  border: 1px solid #cfd5e2;
+  border-radius: 8px;
+  font: inherit;
+  background: #fff;
+}
+.page textarea { width: 100%; resize: vertical; }
+.page label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; font-weight: 600; }
+.page button {
+  padding: 10px 16px;
+  border: 0;
+  border-radius: 8px;
+  background: #3456d1;
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.page button.danger { background: #c0392b; }
+.page button.link-button { background: none; color: #a52828; padding: 0 4px; text-decoration: underline; }
+.page table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #e5e9f1; border-radius: 12px; overflow: hidden; margin-top: 12px; }
+.page th, .page td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #eef1f6; font-size: 14px; vertical-align: top; }
+.page th { background: #f2f5fb; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: #5369c8; }
+.page .list { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 14px; margin: 14px 0 0; }
+.page .list li { padding: 12px 14px; border: 1px solid #eef1f6; border-radius: 10px; background: #fff; }
+.page .list li p { margin: 6px 0; }
+.page .choice { flex-direction: row; align-items: center; gap: 8px; font-weight: 400; padding: 4px 0; }
+.section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; flex-wrap: wrap; }
+.section-head h1 { margin: 6px 0; }
+.grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; }
+.stack { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
+.stack-inline { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.form-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.filters { display: flex; gap: 10px; margin: 18px 0; flex-wrap: wrap; }
+.timer { font-size: 22px; font-weight: 700; color: #c0392b; }
+.avatar { width: 72px; height: 72px; border-radius: 50%; object-fit: cover; background: #3456d1; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 26px; font-weight: 700; }
+.account-identity { display: flex; align-items: center; gap: 18px; }
+.badge { background: #e8f7ed; color: #21643c; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+.role { padding: 2px 8px; border-radius: 999px; background: #eef2ff; color: #3456d1; font-size: 11px; font-weight: 700; }
+.hint { color: #6b7280; font-size: 12px; }
+.button.secondary { background: #eef2ff; color: #3456d1; }

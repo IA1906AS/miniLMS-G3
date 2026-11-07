@@ -2,16 +2,62 @@
 {% block title %}Tài khoản | LMS{% endblock %}
 {% block content %}
   <section class="account-header">
-    <p class="eyebrow">TÀI KHOẢN</p>
-    <h1>{{ user.get('name') or user.email }}</h1>
-    <p>{{ user.email }} <span class="role">{{ user.role }}</span></p>
+    <div class="account-identity">
+      {% if has_avatar %}
+        <img class="avatar" src="{{ url_for('web.avatar_file', user_id=user.id) }}" alt="Ảnh đại diện">
+      {% else %}
+        <span class="avatar avatar-placeholder">{{ (user.get('name') or user.email)[:1] }}</span>
+      {% endif %}
+      <div>
+        <p class="eyebrow">TÀI KHOẢN</p>
+        <h1>{{ user.get('name') or user.email }}</h1>
+        <p>{{ user.email }} <span class="role">{{ user.role }}</span></p>
+      </div>
+    </div>
   </section>
+
+  <section class="section grid-2">
+    <article class="card">
+      <h2>Hồ sơ</h2>
+      <form method="post" action="{{ url_for('web.update_profile_form') }}" class="stack">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label>Họ tên<input name="fullName" maxlength="100" value="{{ profile.fullName }}"></label>
+        <label>Giới thiệu<textarea name="bio" maxlength="500" rows="3">{{ profile.bio }}</textarea></label>
+        <label>Số điện thoại<input name="phone" maxlength="30" value="{{ profile.phone }}"></label>
+        <button type="submit">Lưu hồ sơ</button>
+      </form>
+    </article>
+
+    <article class="card">
+      <h2>Ảnh đại diện</h2>
+      <form method="post" action="{{ url_for('web.upload_avatar_form') }}" enctype="multipart/form-data" class="stack">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="file" name="avatar" accept="image/png,image/jpeg,image/gif,image/webp" required>
+        <button type="submit">Tải ảnh lên</button>
+      </form>
+      <p class="hint">PNG/JPG/GIF/WEBP, tối đa 2MB.</p>
+    </article>
+  </section>
+
+  <section class="section">
+    <article class="card">
+      <h2>Đổi mật khẩu</h2>
+      <form method="post" action="{{ url_for('web.change_password_form') }}" class="stack">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label>Mật khẩu hiện tại<input type="password" name="oldPassword" required></label>
+        <label>Mật khẩu mới<input type="password" name="newPassword" minlength="10" required></label>
+        <label>Xác nhận mật khẩu mới<input type="password" name="confirmPassword" minlength="10" required></label>
+        <button type="submit">Đổi mật khẩu</button>
+      </form>
+    </article>
+  </section>
+
   <section class="section">
     <h2>{% if user.role == "STUDENT" %}Khóa học của tôi{% else %}Khóa học{% endif %}</h2>
     <div class="course-list">
       {% for course in courses %}
         <article class="card">
-          <h3>{{ course.name }}</h3>
+          <h3><a href="{{ url_for('web.course_detail', course_id=course.id) }}">{{ course.name }}</a></h3>
           <p>Mã khóa học: {{ course.id }}</p>
           {% if course.score is defined %}<p>Điểm: {{ course.score }}</p>{% endif %}
         </article>
@@ -20,6 +66,7 @@
       {% endfor %}
     </div>
   </section>
+
   {% if user.role == "STUDENT" and available %}
     <section class="section">
       <h2>Đăng ký khóa học</h2>

@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}Quản trị | LMS{% endblock %}
+{% block content %}
+  <section class="section">
+    <h1>Quản trị hệ thống</h1>
+    <table>
+      <thead><tr><th>Email</th><th>Họ tên</th><th>Vai trò</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
+      <tbody>
+        {% for account in users %}
+          <tr>
+            <td>{{ account.email }}</td>
+            <td>{{ account.name or "—" }}</td>
+            <td>
+              <form method="post" action="{{ url_for('web.change_role_form', user_id=account.id) }}" class="inline-form">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <select name="role">
+                  {% for role in ["STUDENT", "INSTRUCTOR", "ADMIN"] %}
+                    <option value="{{ role }}" {% if account.role == role %}selected{% endif %}>{{ role }}</option>
+                  {% endfor %}
+                </select>
+                <button type="submit">Lưu</button>
+              </form>
+            </td>
+            <td>{{ "Đã khoá" if account.locked else "Hoạt động" }}</td>
+            <td>
+              {% if account.locked %}
+                <form method="post" action="{{ url_for('web.unlock_user_form', user_id=account.id) }}" class="inline-form">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button type="submit">Mở khoá</button>
+                </form>
+              {% else %}
+                <form method="post" action="{{ url_for('web.lock_user_form', user_id=account.id) }}" class="inline-form">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button type="submit" class="danger">Khoá</button>
+                </form>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section class="section">
+    <h2>Nhật ký hoạt động (50 gần nhất)</h2>
+    <table>
+      <thead><tr><th>Thời gian</th><th>Người dùng</th><th>Hành động</th><th>Tài nguyên</th><th>Kết quả</th></tr></thead>
+      <tbody>
+        {% for entry in entries|reverse %}
+          <tr>
+            <td>{{ entry.ts }}</td>
+            <td>{{ entry.actorId or "—" }}</td>
+            <td>{{ entry.action }}</td>
+            <td>{{ entry.resource }}</td>
+            <td>{{ entry.result }}</td>
+          </tr>
+        {% else %}
+          <tr><td colspan="5">Chưa có bản ghi.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+{% endblock %}

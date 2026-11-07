@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Làm bài: {{ quiz.title }}{% endblock %}
+{% block content %}
+  <section class="section-head">
+    <div>
+      <p class="eyebrow">ĐANG LÀM BÀI</p>
+      <h1>{{ quiz.title }}</h1>
+    </div>
+    <p class="timer" id="timer" data-remaining="{{ remaining }}">--:--</p>
+  </section>
+
+  <form id="quiz-form" method="post" action="{{ url_for('web.submit_quiz_attempt_form', attempt_id=attempt.id) }}" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    {% for question in quiz.questions %}
+      <article class="card">
+        <h3>Câu {{ loop.index }}. {{ question.question }}</h3>
+        {% for option in question.options %}
+          <label class="choice">
+            <input type="radio" name="q_{{ question.id }}" value="{{ loop.index0 }}">
+            {{ option }}
+          </label>
+        {% endfor %}
+      </article>
+    {% endfor %}
+    <button type="submit">Nộp bài</button>
+  </form>
+
+  <script>
+    (function () {
+      var el = document.getElementById("timer");
+      var remaining = parseInt(el.dataset.remaining, 10);
+      function tick() {
+        if (remaining <= 0) {
+          el.textContent = "Hết giờ";
+          document.getElementById("quiz-form").submit();
+          return;
+        }
+        var m = Math.floor(remaining / 60), s = remaining % 60;
+        el.textContent = m + ":" + (s < 10 ? "0" : "") + s;
+        remaining -= 1;
+        setTimeout(tick, 1000);
+      }
+      tick();
+    })();
+  </script>
+{% endblock %}

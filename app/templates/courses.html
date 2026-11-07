@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Khoá học | LMS{% endblock %}
+{% block content %}
+  <section class="section-head">
+    <div>
+      <p class="eyebrow">KHOÁ HỌC</p>
+      <h1>Danh sách khoá học</h1>
+    </div>
+    {% if current_user.role in ("ADMIN", "INSTRUCTOR") %}
+      <form method="post" action="{{ url_for('web.create_course_form') }}" class="inline-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input name="name" placeholder="Tên khoá học mới" maxlength="200" required>
+        {% if current_user.role == "ADMIN" %}
+          <select name="instructorId" required>
+            {% for teacher in instructors %}
+              <option value="{{ teacher.id }}">{{ teacher.email }}</option>
+            {% endfor %}
+          </select>
+        {% endif %}
+        <button type="submit">Tạo khoá học</button>
+      </form>
+    {% endif %}
+  </section>
+
+  <form method="get" class="filters">
+    <input name="q" value="{{ q }}" placeholder="Tìm theo tên khoá học">
+    <input name="instructor" value="{{ instructor }}" placeholder="Mã giảng viên (vd u2)">
+    <button type="submit">Tìm</button>
+  </form>
+
+  <div class="course-list">
+    {% for course in courses %}
+      <article class="card">
+        <h3><a href="{{ url_for('web.course_detail', course_id=course.id) }}">{{ course.name }}</a></h3>
+        <p>Mã khoá học: {{ course.id }}</p>
+        <p>Giảng viên: {{ course.instructorId }}</p>
+      </article>
+    {% else %}
+      <p>Không tìm thấy khoá học phù hợp.</p>
+    {% endfor %}
+  </div>
+{% endblock %}
