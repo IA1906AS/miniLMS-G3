@@ -208,7 +208,11 @@ def test_account_writes_are_audited_once_each(app, client):
     update(client, token, {"bio": "Xin chào"})
 
     with open(app.extensions["lms_store"]["audit_log_path"], encoding="utf-8") as audit_file:
-        entries = [line for line in audit_file.read().splitlines() if line.strip()]
+        entries = [
+            line
+            for line in audit_file.read().splitlines()
+            if line.strip() and '"action": "LOGIN"' not in line
+        ]
     assert len(entries) == 2
     assert "PASSWORD_CHANGE" in entries[0]
     assert "PROFILE_UPDATE" in entries[1]

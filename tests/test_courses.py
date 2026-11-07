@@ -92,13 +92,16 @@ def test_create_course_validates_body(client, body):
     assert response.get_json() == {"error": "VALIDATION_ERROR"}
 
 
-def test_only_admin_creates_courses(client):
-    for email in ("an.gv@lms.test", "chi.sv@lms.test"):
-        response = post(
-            client, login(client, email), "/courses", {"name": "X", "instructorId": "u2"}
-        )
-        assert response.status_code == 403
-        assert response.get_json() == {"error": "FORBIDDEN"}
+def test_instructor_creates_own_course_and_student_cannot(client):
+    an = login(client, "an.gv@lms.test")
+    created = post(client, an, "/courses", {"name": "X", "instructorId": "u2"})
+    assert created.status_code == 201
+    assert created.get_json()["instructorId"] == "u2"
+
+    chi = login(client, "chi.sv@lms.test")
+    denied = post(client, chi, "/courses", {"name": "X", "instructorId": "u2"})
+    assert denied.status_code == 403
+    assert denied.get_json() == {"error": "FORBIDDEN"}
 
 
 def test_create_course_checks_instructor(client):
@@ -250,7 +253,11 @@ def test_course_writes_are_audited(client, app):
     delete(client, admin, "/courses/c2/enrollments/u4")
 
     with open(app.extensions["lms_store"]["audit_log_path"], encoding="utf-8") as audit_file:
-        entries = [line for line in audit_file.read().splitlines() if line.strip()]
+        entries = [
+            line
+            for line in audit_file.read().splitlines()
+            if line.strip() and '"action": "LOGIN"' not in line
+        ]
     assert len(entries) == 4
     assert "COURSE_REQUEST" in entries[0]
     assert "COURSE_APPROVE" in entries[1]
@@ -267,8 +274,9 @@ def test_course_services_recheck_authorization(app):
     with using_store(app.extensions["lms_store"]):
         with pytest.raises(Forbidden):
             course_service.create_course(chi, "X", "u2")
-        with pytest.raises(Forbidden):
-            course_service.create_course(an, "X", "u2")
+        # Giảng viên tạo được khoá học nhưng luôn đứng tên chính mình
+        course = course_service.create_course(an, "X", "u3")
+        assert course["instructorId"] == "u2"
         with pytest.raises(Forbidden):
             course_service.enroll_student(an, "c2", "u4")
 

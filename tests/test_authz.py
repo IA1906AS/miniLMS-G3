@@ -338,7 +338,7 @@ def test_A19_audit_logs_one_denial_and_one_update_without_credentials(app):
 
     audit_path = app.extensions["lms_store"]["audit_log_path"]
     with open(audit_path, encoding="utf-8") as audit_file:
-        lines = audit_file.read().splitlines()
+        lines = [line for line in audit_file.read().splitlines() if '"action": "LOGIN"' not in line]
     assert len(lines) == 2
     entries = [json.loads(line) for line in lines]
     assert entries[0] == {
@@ -383,7 +383,7 @@ def test_http_exception_403_is_audited_once(app):
     assert response.status_code == 403
     audit_path = app.extensions["lms_store"]["audit_log_path"]
     with open(audit_path, encoding="utf-8") as audit_file:
-        lines = audit_file.read().splitlines()
+        lines = [line for line in audit_file.read().splitlines() if '"action": "LOGIN"' not in line]
     assert len(lines) == 1
     assert json.loads(lines[0])["action"] == "ACCESS_DENIED"
     assert json.loads(lines[0])["result"] == "FORBIDDEN"

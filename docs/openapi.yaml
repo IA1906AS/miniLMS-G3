@@ -292,7 +292,7 @@ paths:
     post:
       security:
         - bearerAuth: []
-      summary: Khởi tạo môn học mới (ADMIN)
+      summary: Khởi tạo môn học mới (ADMIN hoặc INSTRUCTOR; giảng viên luôn tạo môn do mình phụ trách)
       requestBody:
         required: true
         content:
@@ -658,4 +658,65 @@ paths:
       responses:
         '200':
           description: Trả về kết quả điểm số sau khi máy chủ tự động đối chiếu đáp án
+        '409':
+          description: Đã nộp trước đó, quá thời lượng làm bài (TIME_EXPIRED) hoặc không còn lượt
 
+  /threads/{threadId}:
+    patch:
+      security:
+        - bearerAuth: []
+      summary: Sửa chủ đề thảo luận (chủ sở hữu hoặc giảng viên/ADMIN của môn)
+      parameters:
+        - name: threadId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, body]
+              properties:
+                title:
+                  type: string
+                body:
+                  type: string
+      responses:
+        '200':
+          description: Trả về chủ đề sau khi cập nhật
+        '403':
+          description: Không phải chủ sở hữu và không có quyền quản lý môn
+        '404':
+          description: Không tìm thấy chủ đề
+
+  /comments/{commentId}:
+    patch:
+      security:
+        - bearerAuth: []
+      summary: Sửa bình luận (chủ sở hữu hoặc giảng viên/ADMIN của môn)
+      parameters:
+        - name: commentId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body:
+                  type: string
+      responses:
+        '200':
+          description: Trả về bình luận sau khi cập nhật
+        '403':
+          description: Không phải chủ sở hữu và không có quyền quản lý môn
+        '404':
+          description: Không tìm thấy bình luận

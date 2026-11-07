@@ -173,17 +173,23 @@ def test_thread_body_validation(client):
     assert post(client, chi, "/courses/c9/threads", {"title": "T", "body": "B"}).status_code == 404
 
 
-def test_thread_delete_requires_course_staff_and_cascades_comments(client):
+def test_thread_delete_allows_owner_and_course_staff(client):
     chi = login(client, "chi.sv@lms.test")
+    dung = login(client, "dung.sv@lms.test")
     thread = make_thread(client, chi).get_json()
     post(client, chi, f"/threads/{thread['id']}/comments", {"body": "Bình luận"})
 
-    # Tác giả là sinh viên nhưng không được xoá (theo lựa chọn của nhóm)
-    assert delete(client, chi, f"/threads/{thread['id']}").status_code == 403
+    # Sinh viên khác không xoá được nội dung của người khác
+    assert delete(client, dung, f"/threads/{thread['id']}").status_code == 403
 
-    an = login(client, "an.gv@lms.test")
-    assert delete(client, an, f"/threads/{thread['id']}").status_code == 200
+    # Chủ sở hữu xoá được nội dung của chính mình (kèm bình luận)
+    assert delete(client, chi, f"/threads/{thread['id']}").status_code == 200
     assert get(client, chi, f"/threads/{thread['id']}/comments").status_code == 404
+
+    # Giảng viên phụ trách vẫn xoá được nội dung của lớp
+    other = make_thread(client, chi).get_json()
+    an = login(client, "an.gv@lms.test")
+    assert delete(client, an, f"/threads/{other['id']}").status_code == 200
 
 
 # --- Comment --------------------------------------------------------------
@@ -217,18 +223,23 @@ def test_comment_body_is_plain_text_and_limits(client):
         assert post(client, chi, path, body).status_code == 400
 
 
-def test_only_course_staff_deletes_comment(client):
+def test_comment_delete_allows_owner_and_admin(client):
     chi = login(client, "chi.sv@lms.test")
     thread = make_thread(client, chi).get_json()
     comment = post(client, chi, f"/threads/{thread['id']}/comments", {"body": "Của Chi"}).get_json()
 
-    assert delete(client, chi, f"/comments/{comment['id']}").status_code == 403
-    binh = login(client, "binh.gv@lms.test")
-    assert delete(client, binh, f"/comments/{comment['id']}").status_code == 403
+    # Chủ sở hữu xoá được bình luận của mình
+    assert delete(client, chi, f"/comments/{comment['id']}").status_code == 200
+
+    second = post(
+        client, chi, f"/threads/{thread['id']}/comments", {"body": "Của Chi 2"}
+    ).get_json()
+    binh = login(client, "binh.gv@lms.test")  # không phụ trách c1
+    assert delete(client, binh, f"/comments/{second['id']}").status_code == 403
 
     admin = login(client, "admin@lms.test")
-    assert delete(client, admin, f"/comments/{comment['id']}").status_code == 200
-    assert delete(client, admin, f"/comments/{comment['id']}").status_code == 404
+    assert delete(client, admin, f"/comments/{second['id']}").status_code == 200
+    assert delete(client, admin, f"/comments/{second['id']}").status_code == 404
 
 
 # --- Audit + lớp 4 --------------------------------------------------------
@@ -246,7 +257,11 @@ def test_forum_writes_are_audited(client, app):
     delete(client, an, f"/announcements/{announcement['id']}")
 
     with open(app.extensions["lms_store"]["audit_log_path"], encoding="utf-8") as audit_file:
-        entries = [line for line in audit_file.read().splitlines() if line.strip()]
+        entries = [
+            line
+            for line in audit_file.read().splitlines()
+            if line.strip() and '"action": "LOGIN"' not in line
+        ]
     actions = [entry for entry in entries]
     assert len(actions) == 6
     for marker in (

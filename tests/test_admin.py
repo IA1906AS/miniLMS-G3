@@ -154,7 +154,7 @@ def test_admin_reads_audit_entries(client, app):
 
     response = get(client, admin, "/admin/audit")
     assert response.status_code == 200
-    entries = response.get_json()
+    entries = [entry for entry in response.get_json() if entry["action"] != "LOGIN"]
     assert len(entries) == 2
     assert [entry["action"] for entry in entries] == ["USER_LOCK", "USER_UNLOCK"]
     assert set(entries[0]) >= {"ts", "actorId", "action", "resource", "result"}

@@ -148,7 +148,11 @@ def test_v2_write_is_audited_once(client, app):
     put(client, an, V2, {"score": 9, "expectedVersion": 0})
 
     with open(app.extensions["lms_store"]["audit_log_path"], encoding="utf-8") as audit_file:
-        lines = [line for line in audit_file.read().splitlines() if line.strip()]
+        lines = [
+            line
+            for line in audit_file.read().splitlines()
+            if line.strip() and '"action": "LOGIN"' not in line
+        ]
     assert len(lines) == 1
     assert "UPDATE_GRADE" in lines[0]
     assert '"version": 1' in lines[0]

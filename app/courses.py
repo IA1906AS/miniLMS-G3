@@ -43,7 +43,7 @@ def list_members(course_id: str) -> Any:
 
 
 @bp.post("/courses")
-@require_role("ADMIN")
+@require_role("ADMIN", "INSTRUCTOR")
 @store_scope
 def create_course() -> Any:
     name, instructor_id = schemas.parse_course_body(request.get_json(silent=True))

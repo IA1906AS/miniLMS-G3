@@ -76,8 +76,12 @@ def get_course(actor: dict[str, Any], course_id: str) -> dict[str, Any]:
 def create_course(actor: dict[str, Any], name: str, instructor_id: str) -> dict[str, Any]:
     state = current_store()
     with state["lock"]:
-        if _role(actor) != "ADMIN":
+        role = _role(actor)
+        if role not in ("ADMIN", "INSTRUCTOR"):
             raise Forbidden()
+        if role == "INSTRUCTOR":
+            # Giảng viên chỉ tạo được khoá học do chính mình phụ trách
+            instructor_id = str(actor.get("id"))
         instructor = state["users"].get(instructor_id)
         if instructor is None:
             raise NotFound()

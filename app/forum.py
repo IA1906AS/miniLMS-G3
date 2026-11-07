@@ -50,6 +50,14 @@ def list_threads(course_id: str) -> Any:
     return jsonify(forum_service.list_threads(g.actor, course_id))
 
 
+@bp.patch("/threads/<thread_id>")
+@require_role("ADMIN", "INSTRUCTOR", "STUDENT")
+@store_scope
+def update_thread(thread_id: str) -> Any:
+    title, body = schemas.parse_thread_body(request.get_json(silent=True))
+    return jsonify(forum_service.update_thread(g.actor, thread_id, title, body))
+
+
 @bp.delete("/threads/<thread_id>")
 @require_role("ADMIN", "INSTRUCTOR", "STUDENT")
 @store_scope
@@ -71,6 +79,14 @@ def create_comment(thread_id: str) -> Any:
 @store_scope
 def list_comments(thread_id: str) -> Any:
     return jsonify(forum_service.list_comments(g.actor, thread_id))
+
+
+@bp.patch("/comments/<comment_id>")
+@require_role("ADMIN", "INSTRUCTOR", "STUDENT")
+@store_scope
+def update_comment(comment_id: str) -> Any:
+    body = schemas.parse_comment_body(request.get_json(silent=True))
+    return jsonify(forum_service.update_comment(g.actor, comment_id, body))
 
 
 @bp.delete("/comments/<comment_id>")

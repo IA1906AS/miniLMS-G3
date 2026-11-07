@@ -50,6 +50,18 @@ def authorize_manage(actor: dict[str, Any], course_id: str) -> dict[str, Any]:
         return course
 
 
+def authorize_modify(
+    actor: dict[str, Any], course_id: str, created_by: str | None
+) -> dict[str, Any]:
+    """ADMIN, giảng viên phụ trách hoặc chính chủ sở hữu nội dung."""
+    state = current_store()
+    with state["lock"]:
+        course = _course(state, course_id)
+        if _can_manage(actor, course) or (created_by is not None and created_by == actor.get("id")):
+            return course
+        raise Forbidden()
+
+
 # --- Announcement ---------------------------------------------------------
 
 
@@ -143,7 +155,7 @@ def delete_thread(actor: dict[str, Any], thread_id: str) -> dict[str, Any]:
         thread = store_module.get_thread(state, thread_id)
         if thread is None:
             raise NotFound()
-        authorize_manage(actor, thread["courseId"])
+        authorize_modify(actor, thread["courseId"], thread.get("createdBy"))
         if not store_module.delete_thread(state, thread_id):
             raise NotFound()
         audit.record(
@@ -213,7 +225,7 @@ def delete_comment(actor: dict[str, Any], comment_id: str) -> dict[str, Any]:
         thread = store_module.get_thread(state, comment["threadId"])
         if thread is None:
             raise NotFound()
-        authorize_manage(actor, thread["courseId"])
+        authorize_modify(actor, thread["courseId"], comment.get("createdBy"))
         if not store_module.delete_comment(state, comment_id):
             raise NotFound()
         audit.record(
@@ -224,3 +236,44 @@ def delete_comment(actor: dict[str, Any], comment_id: str) -> dict[str, Any]:
             path=state["audit_log_path"],
         )
         return {"id": comment_id, "deleted": True}
+
+
+def update_thread(actor: dict[str, Any], thread_id: str, title: str, body: str) -> dict[str, Any]:
+    state = current_store()
+    with state["lock"]:
+        thread = store_module.get_thread(state, thread_id)
+        if thread is None:
+            raise NotFound()
+        authorize_modify(actor, thread["courseId"], thread.get("createdBy"))
+        if not store_module.update_thread(state, thread_id, title=title, body=body):
+            raise NotFound()
+        audit.record(
+            actor["id"],
+            "THREAD_UPDATE",
+            f"/threads/{thread_id}",
+            "OK",
+            path=state["audit_log_path"],
+        )
+        return store_module.get_thread(state, thread_id) or {}
+
+
+def update_comment(actor: dict[str, Any], comment_id: str, body: str) -> dict[str, Any]:
+    state = current_store()
+    with state["lock"]:
+        comment = store_module.get_comment(state, comment_id)
+        if comment is None:
+            raise NotFound()
+        thread = store_module.get_thread(state, comment["threadId"])
+        if thread is None:
+            raise NotFound()
+        authorize_modify(actor, thread["courseId"], comment.get("createdBy"))
+        if not store_module.update_comment(state, comment_id, body=body):
+            raise NotFound()
+        audit.record(
+            actor["id"],
+            "COMMENT_UPDATE",
+            f"/comments/{comment_id}",
+            "OK",
+            path=state["audit_log_path"],
+        )
+        return store_module.get_comment(state, comment_id) or {}

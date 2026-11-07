@@ -283,7 +283,11 @@ def test_assignment_writes_are_audited(client, app):
     post(client, chi, f"/assignments/{assignment['id']}/submissions", {"content": "Bài làm"})
 
     with open(app.extensions["lms_store"]["audit_log_path"], encoding="utf-8") as audit_file:
-        entries = [line for line in audit_file.read().splitlines() if line.strip()]
+        entries = [
+            line
+            for line in audit_file.read().splitlines()
+            if line.strip() and '"action": "LOGIN"' not in line
+        ]
     assert len(entries) == 2
     assert "ASSIGNMENT_CREATE" in entries[0]
     assert "SUBMISSION_CREATE" in entries[1]

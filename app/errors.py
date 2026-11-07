@@ -38,6 +38,10 @@ class Conflict(AppError):
     status, code = 409, "CONFLICT"
 
 
+class TimeExpired(Conflict):
+    status, code = 409, "TIME_EXPIRED"
+
+
 class MailDeliveryFailed(AppError):
     status, code = 503, "MAIL_DELIVERY_FAILED"
 

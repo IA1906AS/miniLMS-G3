@@ -169,7 +169,7 @@ Thiết kế, tiêu chí nghiệm thu và kịch bản demo:
 | Đăng ký/đăng nhập, JWT, phiên cookie, CSRF | Xong | có test bảo mật |
 | Quên/đặt lại mật khẩu | Xong | token một lần, hết hạn 30 phút |
 | OAuth Google/GitHub | Xong | cần client id/secret để dùng thật |
-| Xem/sửa điểm + RBAC + audit | Xong | chưa có optimistic locking |
+| Xem/sửa điểm + RBAC + audit | Xong | có optimistic locking ở endpoint `/v2` |
 | Pattern #8: đăng ký khóa học + outbox | Xong | [ADR 0005](docs/decisions/0005-outbox-email-dang-ky.md) |
 | GĐ3: phân quyền mở rộng (8 endpoint) | Xong | [ADR 0007](docs/decisions/0007-giai-doan-3-phan-quyen.md) |
 | GĐ3 bước 3.1: logout, đổi mật khẩu, hồ sơ | Xong | [ADR 0008](docs/decisions/0008-token-vo-hieu-theo-giay.md) |
@@ -181,9 +181,13 @@ Thiết kế, tiêu chí nghiệm thu và kịch bản demo:
 | Lưu trữ tệp: Avatar, tài liệu bài giảng, tệp bài nộp | Xong | Chống path traversal, kiểm soát mime/size |
 | Bài kiểm tra trắc nghiệm & chấm điểm tự động | Xong | Đối chiếu đáp án & tính điểm trên server |
 | Quản trị khoá học: tìm kiếm, sửa, xoá cascade | Xong | Tra cứu `?q=&instructor=`, gỡ bỏ môn |
+| Giới hạn thời lượng làm quiz | Xong | nộp quá hạn trả `409 TIME_EXPIRED` |
+| Diễn đàn: sửa/xoá nội dung của chính mình | Xong | `PATCH /threads|/comments`, chủ sở hữu hoặc GV/ADMIN |
+| Audit sự kiện đăng nhập | Xong | ghi `LOGIN` cho API và form web |
+| Giảng viên tự tạo khoá học | Xong | `POST /courses` cho ADMIN + INSTRUCTOR |
 | OpenAPI 3.0 (Swagger spec) | Xong | [docs/openapi.yaml](docs/openapi.yaml) |
 | Quality gate + CI | Xong | [ADR 0006](docs/decisions/0006-quality-gate-2-tang.md) |
-| Pattern #3: optimistic locking khi sửa điểm | Chưa làm | kế hoạch trong tài liệu pattern |
+| Pattern #3: optimistic locking khi sửa điểm | Xong | [ADR 0013](docs/decisions/0013-optimistic-locking-diem.md) |
 | UI quản trị người dùng/ghi danh | Chưa làm | mới có API |
 | Worker outbox chạy nền mặc định | Chưa bật | cần `OUTBOX_POLL_INTERVAL > 0` hoặc cron `flask outbox drain` |
 

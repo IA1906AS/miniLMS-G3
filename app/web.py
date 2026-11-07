@@ -19,7 +19,7 @@ from flask import (
     url_for,
 )
 
-from . import auth, oauth, passwords, schemas, services, store
+from . import audit, auth, oauth, passwords, schemas, services, store
 from .errors import (
     AccountLocked,
     Conflict,
@@ -95,6 +95,13 @@ def login_form() -> str | Any:
             return render_template("login.html", error="Email hoặc mật khẩu không chính xác."), 401
         session.clear()
         session["user_id"] = user["id"]
+        audit.record(
+            user["id"],
+            "LOGIN",
+            "/login",
+            "OK",
+            path=current_app.extensions["lms_store"]["audit_log_path"],
+        )
         return redirect(url_for("web.account"))
     return render_template("login.html")
 

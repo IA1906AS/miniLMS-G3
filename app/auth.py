@@ -4,6 +4,7 @@ from typing import Any
 import bcrypt
 import jwt
 
+from . import audit
 from . import store as store_module
 from .errors import (
     AccountLocked,
@@ -120,6 +121,7 @@ def login(
     current = _store(state)
     with current["lock"]:
         token = issue_token(user["id"], secret, ttl, now=current["now"]())
+    audit.record(user["id"], "LOGIN", "/auth/login", "OK", path=current.get("audit_log_path"))
     return {
         "accessToken": token,
         "expiresIn": ttl,

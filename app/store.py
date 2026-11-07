@@ -1683,6 +1683,22 @@ def get_thread(state: dict[str, Any], thread_id: str) -> dict[str, Any] | None:
     return _thread_view(row) if row is not None else None
 
 
+def update_thread(state: dict[str, Any], thread_id: str, *, title: str, body: str) -> bool:
+    with state["lock"]:
+        connection = state["connection"]
+        connection.execute("BEGIN")
+        try:
+            cursor = connection.execute(
+                "UPDATE threads SET title = %s, body = %s WHERE id = %s",
+                (title, body, thread_id),
+            )
+            connection.execute("COMMIT")
+        except psycopg.Error:
+            connection.execute("ROLLBACK")
+            raise
+        return cursor.rowcount > 0
+
+
 def delete_thread(state: dict[str, Any], thread_id: str) -> bool:
     with state["lock"]:
         connection = state["connection"]
@@ -1755,6 +1771,14 @@ def get_comment(state: dict[str, Any], comment_id: str) -> dict[str, Any] | None
             .fetchone()
         )
     return _comment_view(row) if row is not None else None
+
+
+def update_comment(state: dict[str, Any], comment_id: str, *, body: str) -> bool:
+    with state["lock"]:
+        cursor = state["connection"].execute(
+            "UPDATE comments SET body = %s WHERE id = %s", (body, comment_id)
+        )
+        return cursor.rowcount > 0
 
 
 def delete_comment(state: dict[str, Any], comment_id: str) -> bool:
@@ -2175,6 +2199,13 @@ def submit_quiz_attempt(
                 raise ValueError("Already submitted")
 
             quiz_id = attempt_row[1]
+            started_at = float(attempt_row[3])
+            duration_row = connection.execute(
+                "SELECT duration_minutes FROM quizzes WHERE id = %s", (quiz_id,)
+            ).fetchone()
+            if duration_row is not None and now > started_at + int(duration_row[0]) * 60:
+                raise ValueError("Time expired")
+
             questions = connection.execute(
                 "SELECT id, correct_option, points FROM quiz_questions WHERE quiz_id = %s",
                 (quiz_id,),

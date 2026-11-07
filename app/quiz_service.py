@@ -7,7 +7,7 @@ from typing import Any
 
 from . import audit
 from . import store as store_module
-from .errors import Conflict, Forbidden, NotFound
+from .errors import Conflict, Forbidden, NotFound, TimeExpired
 from .runtime import current_store
 
 
@@ -174,12 +174,17 @@ def submit_attempt(
         if attempt.get("submittedAt") is not None:
             raise Conflict()
 
-        result = store_module.submit_quiz_attempt(
-            state,
-            attempt_id=attempt_id,
-            answers=answers,
-            now=state["now"](),
-        )
+        try:
+            result = store_module.submit_quiz_attempt(
+                state,
+                attempt_id=attempt_id,
+                answers=answers,
+                now=state["now"](),
+            )
+        except ValueError as error:
+            if str(error) == "Time expired":
+                raise TimeExpired() from error
+            raise Conflict() from error
         audit.record(
             actor["id"],
             "QUIZ_ATTEMPT_SUBMIT",

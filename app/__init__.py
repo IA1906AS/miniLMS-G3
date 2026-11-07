@@ -125,6 +125,7 @@ def create_app(config: Mapping[str, Any] | None = None) -> Flask:
             session["csrf_token"] = csrf_token
             session["user_id"] = user["id"]
             session.permanent = bool(body.get("remember")) if isinstance(body, dict) else False
+            audit.record(user["id"], "LOGIN", "/auth/login", "OK", path=state["audit_log_path"])
             return jsonify(message="Signed in")
 
         result = auth.login(
