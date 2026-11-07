@@ -1,6 +1,6 @@
 # MiniLMS
 
-MiniLMS là một hệ quản lý học tập nhỏ (Flask + SQLite) dùng cho bài tập nhóm: quản lý
+MiniLMS là một hệ quản lý học tập nhỏ (Flask + PostgreSQL) dùng cho bài tập nhóm: quản lý
 tài khoản, khóa học, điểm, đăng ký khóa học và email xác nhận. Mục tiêu kép: giữ các bất
 biến bảo mật (JWT, CSRF, phân quyền, audit) và minh họa **defensive pattern #8 —
 transactional outbox** trên một luồng nghiệp vụ thật.
@@ -15,7 +15,7 @@ transactional outbox** trên một luồng nghiệp vụ thật.
 |---|---|---|
 | Ngôn ngữ | Python 3.11+ (dev hiện tại 3.14, CI 3.11–3.13) | — |
 | Web | Flask 3 | [0001](docs/decisions/0001-flask-monolith.md) |
-| Dữ liệu | SQLite qua `sqlite3`, SQL thuần | [0002](docs/decisions/0002-sqlite-raw-sql.md) |
+| Dữ liệu | PostgreSQL qua `psycopg`, SQL thuần | [0014](docs/decisions/0014-postgresql.md) |
 | Test | pytest 9 + pytest-cov, ngưỡng 80% | [0003](docs/decisions/0003-pytest-va-coverage.md) |
 | Chất lượng | ruff (format + lint) + mypy cơ bản | [0004](docs/decisions/0004-ruff-mypy.md) |
 | Bảo mật | JWT, cookie phiên `HttpOnly`, CSRF, RBAC, audit JSONL | — |
@@ -74,7 +74,7 @@ Copy-Item .env.example .env
 | Biến | Bắt buộc | Ghi chú |
 |---|---|---|
 | `JWT_SECRET` | Có | ≥ 32 ký tự; thiếu thì app không khởi động |
-| `DATABASE_PATH` | Không | mặc định `lms.sqlite3`; test dùng `:memory:` |
+| `DATABASE_URL` | Không | DSN PostgreSQL, mặc định `postgresql://postgres@127.0.0.1:2010/lms`; test đặt `TEST_DATABASE_URL` |
 | `PUBLIC_BASE_URL` | Không | origin dùng trong link reset/OAuth; HTTPS khi deploy |
 | `SMTP_HOST`, `SMTP_FROM` | Khi gửi mail | thiếu thì outbox đẩy event sang `DEAD` sau số lần thử |
 | `OUTBOX_*` | Không | xem mục 6 |

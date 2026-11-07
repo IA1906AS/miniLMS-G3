@@ -1,6 +1,6 @@
 # 0002 — SQLite + SQL thuần, không ORM
 
-- **Trạng thái:** Đã chấp nhận
+- **Trạng thái:** Bị thay thế bởi 0014 — Đã chấp nhận
 - **Ngày:** 2026-11-06
 - **Người quyết định:** nhóm phát triển MiniLMS
 

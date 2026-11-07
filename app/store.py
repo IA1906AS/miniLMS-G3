@@ -1,7 +1,6 @@
 import json
 import pathlib
 import secrets
-import sqlite3
 import threading
 import time
 import uuid
@@ -9,29 +8,52 @@ from collections.abc import Callable
 from typing import Any
 
 import bcrypt
+import psycopg
+from psycopg import pq as pg_pq
 
 db: dict[str, Any] | None = None
 
 
-def init(
-    database_path: str = "lms.sqlite3", clock: Callable[[], float] | None = None
-) -> dict[str, Any]:
+def _in_transaction(connection: Any) -> bool:
+    """Tương đương sqlite3 Connection.in_transaction."""
+    return connection.info.transaction_status != pg_pq.TransactionStatus.IDLE
+
+
+def _run_script(connection: Any, script: str) -> None:
+    """Tương đương sqlite3.executescript: chạy từng câu lệnh DDL riêng."""
+    for statement in script.split(";"):
+        if statement.strip():
+            connection.execute(statement)
+
+
+def _table_columns(connection: Any, table: str) -> list[tuple[Any, ...]]:
+    """Tương đương PRAGMA table_info: trả các dòng có cột [1] là tên cột."""
+    return connection.execute(
+        "SELECT ordinal_position, column_name, data_type "
+        "FROM information_schema.columns "
+        "WHERE table_schema = current_schema() AND table_name = %s "
+        "ORDER BY ordinal_position",
+        (table,),
+    ).fetchall()
+
+
+def init(database_url: str, clock: Callable[[], float] | None = None) -> dict[str, Any]:
     global db
 
     now = clock if clock is not None else time.time
-    connection = sqlite3.connect(database_path, check_same_thread=False, isolation_level=None)
-    connection.execute("PRAGMA foreign_keys = ON")
-    connection.executescript(
+    connection = psycopg.connect(database_url, autocommit=True)
+    _run_script(
+        connection,
         """
         CREATE TABLE IF NOT EXISTS users (
             id TEXT PRIMARY KEY,
-            email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+            email TEXT NOT NULL UNIQUE,
             name TEXT NOT NULL DEFAULT '',
             bio TEXT NOT NULL DEFAULT '',
             phone TEXT NOT NULL DEFAULT '',
             locked INTEGER NOT NULL DEFAULT 0,
             role TEXT NOT NULL,
-            pw_hash BLOB NOT NULL
+            pw_hash BYTEA NOT NULL
         );
         CREATE TABLE IF NOT EXISTS courses (
             id TEXT PRIMARY KEY,
@@ -43,22 +65,22 @@ def init(
             name TEXT NOT NULL,
             instructor_id TEXT NOT NULL REFERENCES users(id),
             status TEXT NOT NULL DEFAULT 'PENDING',
-            created_at REAL NOT NULL,
-            decided_at REAL,
+            created_at DOUBLE PRECISION NOT NULL,
+            decided_at DOUBLE PRECISION,
             decided_by TEXT
         );
         CREATE TABLE IF NOT EXISTS enrollments (
             course_id TEXT NOT NULL REFERENCES courses(id),
             student_id TEXT NOT NULL REFERENCES users(id),
-            score REAL NOT NULL,
+            score DOUBLE PRECISION NOT NULL,
             version INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (course_id, student_id)
         );
         CREATE TABLE IF NOT EXISTS password_reset_tokens (
             token_hash TEXT PRIMARY KEY,
             user_id TEXT NOT NULL REFERENCES users(id),
-            expires_at REAL NOT NULL,
-            used_at REAL
+            expires_at DOUBLE PRECISION NOT NULL,
+            used_at DOUBLE PRECISION
         );
         CREATE TABLE IF NOT EXISTS oauth_accounts (
             provider TEXT NOT NULL,
@@ -67,16 +89,16 @@ def init(
             PRIMARY KEY (provider, subject)
         );
         CREATE TABLE IF NOT EXISTS outbox_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
             event_id TEXT NOT NULL UNIQUE,
             type TEXT NOT NULL,
             payload TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'PENDING',
             attempts INTEGER NOT NULL DEFAULT 0,
-            next_attempt_at REAL NOT NULL,
-            locked_until REAL,
-            created_at REAL NOT NULL,
-            sent_at REAL,
+            next_attempt_at DOUBLE PRECISION NOT NULL,
+            locked_until DOUBLE PRECISION,
+            created_at DOUBLE PRECISION NOT NULL,
+            sent_at DOUBLE PRECISION,
             last_error TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_outbox_due
@@ -86,16 +108,16 @@ def init(
             course_id TEXT NOT NULL REFERENCES courses(id),
             title TEXT NOT NULL,
             description TEXT NOT NULL DEFAULT '',
-            due_at REAL NOT NULL,
+            due_at DOUBLE PRECISION NOT NULL,
             created_by TEXT NOT NULL,
-            created_at REAL NOT NULL
+            created_at DOUBLE PRECISION NOT NULL
         );
         CREATE TABLE IF NOT EXISTS submissions (
             id TEXT PRIMARY KEY,
             assignment_id TEXT NOT NULL REFERENCES assignments(id),
             student_id TEXT NOT NULL REFERENCES users(id),
             content TEXT NOT NULL,
-            submitted_at REAL NOT NULL,
+            submitted_at DOUBLE PRECISION NOT NULL,
             UNIQUE (assignment_id, student_id)
         );
         CREATE TABLE IF NOT EXISTS announcements (
@@ -104,7 +126,7 @@ def init(
             title TEXT NOT NULL,
             body TEXT NOT NULL,
             created_by TEXT NOT NULL,
-            created_at REAL NOT NULL
+            created_at DOUBLE PRECISION NOT NULL
         );
         CREATE TABLE IF NOT EXISTS threads (
             id TEXT PRIMARY KEY,
@@ -112,14 +134,14 @@ def init(
             title TEXT NOT NULL,
             body TEXT NOT NULL,
             created_by TEXT NOT NULL,
-            created_at REAL NOT NULL
+            created_at DOUBLE PRECISION NOT NULL
         );
         CREATE TABLE IF NOT EXISTS comments (
             id TEXT PRIMARY KEY,
             thread_id TEXT NOT NULL REFERENCES threads(id),
             body TEXT NOT NULL,
             created_by TEXT NOT NULL,
-            created_at REAL NOT NULL
+            created_at DOUBLE PRECISION NOT NULL
         );
         CREATE TABLE IF NOT EXISTS materials (
             id TEXT PRIMARY KEY,
@@ -129,7 +151,7 @@ def init(
             file_path TEXT NOT NULL,
             file_size INTEGER NOT NULL,
             created_by TEXT NOT NULL,
-            created_at REAL NOT NULL
+            created_at DOUBLE PRECISION NOT NULL
         );
         CREATE TABLE IF NOT EXISTS quizzes (
             id TEXT PRIMARY KEY,
@@ -139,7 +161,7 @@ def init(
             duration_minutes INTEGER NOT NULL,
             max_attempts INTEGER NOT NULL DEFAULT 1,
             created_by TEXT NOT NULL,
-            created_at REAL NOT NULL
+            created_at DOUBLE PRECISION NOT NULL
         );
         CREATE TABLE IF NOT EXISTS quiz_questions (
             id TEXT PRIMARY KEY,
@@ -147,21 +169,22 @@ def init(
             question_text TEXT NOT NULL,
             options TEXT NOT NULL,
             correct_option INTEGER NOT NULL,
-            points REAL NOT NULL DEFAULT 1.0
+            position INTEGER NOT NULL DEFAULT 0,
+            points DOUBLE PRECISION NOT NULL DEFAULT 1.0
         );
         CREATE TABLE IF NOT EXISTS quiz_attempts (
             id TEXT PRIMARY KEY,
             quiz_id TEXT NOT NULL REFERENCES quizzes(id),
             student_id TEXT NOT NULL REFERENCES users(id),
             attempt_number INTEGER NOT NULL,
-            started_at REAL NOT NULL,
-            submitted_at REAL,
-            score REAL,
+            started_at DOUBLE PRECISION NOT NULL,
+            submitted_at DOUBLE PRECISION,
+            score DOUBLE PRECISION,
             answers TEXT
         );
-        """
+        """,
     )
-    columns = {row[1] for row in connection.execute("PRAGMA table_info(users)")}
+    columns = {row[1] for row in _table_columns(connection, "users")}
     if "bio" not in columns:  # DB cũ tạo trước khi có cột bio
         connection.execute("ALTER TABLE users ADD COLUMN bio TEXT NOT NULL DEFAULT ''")
     if "phone" not in columns:  # DB cũ tạo trước khi có cột phone
@@ -170,29 +193,35 @@ def init(
         connection.execute("ALTER TABLE users ADD COLUMN locked INTEGER NOT NULL DEFAULT 0")
     if "avatar_path" not in columns:
         connection.execute("ALTER TABLE users ADD COLUMN avatar_path TEXT NOT NULL DEFAULT ''")
-    enrollment_columns = {row[1] for row in connection.execute("PRAGMA table_info(enrollments)")}
+    enrollment_columns = {row[1] for row in _table_columns(connection, "enrollments")}
     if "version" not in enrollment_columns:  # DB cũ tạo trước khi có optimistic locking
         connection.execute("ALTER TABLE enrollments ADD COLUMN version INTEGER NOT NULL DEFAULT 0")
-    sub_cols = {row[1] for row in connection.execute("PRAGMA table_info(submissions)")}
+    sub_cols = {row[1] for row in _table_columns(connection, "submissions")}
     if "file_name" not in sub_cols:
         connection.execute("ALTER TABLE submissions ADD COLUMN file_name TEXT NOT NULL DEFAULT ''")
     if "file_path" not in sub_cols:
         connection.execute("ALTER TABLE submissions ADD COLUMN file_path TEXT NOT NULL DEFAULT ''")
     if "grade" not in sub_cols:
-        connection.execute("ALTER TABLE submissions ADD COLUMN grade REAL")
+        connection.execute("ALTER TABLE submissions ADD COLUMN grade DOUBLE PRECISION")
     if "feedback" not in sub_cols:
         connection.execute("ALTER TABLE submissions ADD COLUMN feedback TEXT NOT NULL DEFAULT ''")
     if "graded_by" not in sub_cols:
         connection.execute("ALTER TABLE submissions ADD COLUMN graded_by TEXT")
+    question_cols = {row[1] for row in _table_columns(connection, "quiz_questions")}
+    if "position" not in question_cols:
+        connection.execute(
+            "ALTER TABLE quiz_questions ADD COLUMN position INTEGER NOT NULL DEFAULT 0"
+        )
     if "graded_at" not in sub_cols:
-        connection.execute("ALTER TABLE submissions ADD COLUMN graded_at REAL")
+        connection.execute("ALTER TABLE submissions ADD COLUMN graded_at DOUBLE PRECISION")
     seed = json.loads((pathlib.Path(__file__).parent / "seed.json").read_text(encoding="utf-8"))
-    with connection:
+    with connection.transaction():
         for user_data in seed["users"]:
             connection.execute(
                 """
-                INSERT OR IGNORE INTO users (id, email, name, role, pw_hash)
-                VALUES (?, ?, '', ?, ?)
+                INSERT INTO users (id, email, name, role, pw_hash)
+                VALUES (%s, %s, '', %s, %s)
+                ON CONFLICT DO NOTHING
                 """,
                 (
                     user_data["id"],
@@ -204,16 +233,18 @@ def init(
         for course in seed["courses"]:
             connection.execute(
                 """
-                INSERT OR IGNORE INTO courses (id, name, instructor_id)
-                VALUES (?, ?, ?)
+                INSERT INTO courses (id, name, instructor_id)
+                VALUES (%s, %s, %s)
+                ON CONFLICT DO NOTHING
                 """,
                 (course["id"], course["name"], course["instructorId"]),
             )
         for enrollment in seed["enrollments"]:
             connection.execute(
                 """
-                INSERT OR IGNORE INTO enrollments (course_id, student_id, score)
-                VALUES (?, ?, ?)
+                INSERT INTO enrollments (course_id, student_id, score)
+                VALUES (%s, %s, %s)
+                ON CONFLICT DO NOTHING
                 """,
                 (
                     enrollment["courseId"],
@@ -339,7 +370,7 @@ def create_user(
             state["connection"].execute(
                 """
                 INSERT INTO users (id, email, name, role, pw_hash)
-                VALUES (?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s)
                 """,
                 (
                     user["id"],
@@ -349,7 +380,7 @@ def create_user(
                     user["pw_hash"],
                 ),
             )
-        except sqlite3.IntegrityError as error:
+        except psycopg.IntegrityError as error:
             raise ValueError("Email address is already registered") from error
         state["users"][user["id"]] = user
         state["by_email"][email.lower()] = user
@@ -368,14 +399,14 @@ def get_or_create_oauth_user(
 ) -> dict[str, Any]:
     connection = state["connection"]
     with state["lock"]:
-        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("BEGIN")
         try:
             row = connection.execute(
                 """
                 SELECT users.id, users.email, users.name, users.role, users.pw_hash
                 FROM oauth_accounts
                 JOIN users ON users.id = oauth_accounts.user_id
-                WHERE oauth_accounts.provider = ? AND oauth_accounts.subject = ?
+                WHERE oauth_accounts.provider = %s AND oauth_accounts.subject = %s
                 """,
                 (provider, subject),
             ).fetchone()
@@ -394,7 +425,7 @@ def get_or_create_oauth_user(
                 return user
 
             if connection.execute(
-                "SELECT 1 FROM users WHERE email = ? COLLATE NOCASE", (email,)
+                "SELECT 1 FROM users WHERE lower(email) = lower(%s)", (email,)
             ).fetchone():
                 connection.execute("ROLLBACK")
                 raise ValueError("Email is already used by another account")
@@ -411,7 +442,7 @@ def get_or_create_oauth_user(
             connection.execute(
                 """
                 INSERT INTO users (id, email, name, role, pw_hash)
-                VALUES (?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s)
                 """,
                 (
                     user["id"],
@@ -424,19 +455,19 @@ def get_or_create_oauth_user(
             connection.execute(
                 """
                 INSERT INTO oauth_accounts (provider, subject, user_id)
-                VALUES (?, ?, ?)
+                VALUES (%s, %s, %s)
                 """,
                 (provider, subject, user["id"]),
             )
             connection.execute("COMMIT")
         except ValueError:
             raise
-        except sqlite3.IntegrityError as error:
-            if connection.in_transaction:
+        except psycopg.IntegrityError as error:
+            if _in_transaction(connection):
                 connection.execute("ROLLBACK")
             raise ValueError("OAuth account could not be linked") from error
-        except sqlite3.Error:
-            if connection.in_transaction:
+        except psycopg.Error:
+            if _in_transaction(connection):
                 connection.execute("ROLLBACK")
             raise
 
@@ -452,25 +483,25 @@ def create_password_reset(
 ) -> None:
     with state["lock"]:
         connection = state["connection"]
-        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("BEGIN")
         try:
             connection.execute(
                 """
                 UPDATE password_reset_tokens
-                SET used_at = ?
-                WHERE user_id = ? AND used_at IS NULL
+                SET used_at = %s
+                WHERE user_id = %s AND used_at IS NULL
                 """,
                 (expires_at, user_id),
             )
             connection.execute(
                 """
                 INSERT INTO password_reset_tokens (token_hash, user_id, expires_at)
-                VALUES (?, ?, ?)
+                VALUES (%s, %s, %s)
                 """,
                 (token_hash, user_id, expires_at),
             )
             connection.execute("COMMIT")
-        except (sqlite3.Error, TypeError, ValueError):
+        except (psycopg.Error, TypeError, ValueError):
             connection.execute("ROLLBACK")
             raise
 
@@ -483,12 +514,12 @@ def consume_password_reset(
 ) -> bool:
     with state["lock"]:
         connection = state["connection"]
-        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("BEGIN")
         try:
             row = connection.execute(
                 """
                 SELECT user_id FROM password_reset_tokens
-                WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?
+                WHERE token_hash = %s AND used_at IS NULL AND expires_at > %s
                 """,
                 (token_hash, now),
             ).fetchone()
@@ -498,15 +529,15 @@ def consume_password_reset(
             user_id = row[0]
             password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt(rounds=10))
             connection.execute(
-                "UPDATE users SET pw_hash = ? WHERE id = ?",
+                "UPDATE users SET pw_hash = %s WHERE id = %s",
                 (password_hash, user_id),
             )
             connection.execute(
-                "UPDATE password_reset_tokens SET used_at = ? WHERE token_hash = ?",
+                "UPDATE password_reset_tokens SET used_at = %s WHERE token_hash = %s",
                 (now, token_hash),
             )
             connection.execute("COMMIT")
-        except (sqlite3.Error, TypeError, ValueError):
+        except (psycopg.Error, TypeError, ValueError):
             connection.execute("ROLLBACK")
             raise
         user = state["users"][user_id]
@@ -522,7 +553,7 @@ def password_reset_is_valid(state: dict[str, Any], token_hash: str, now: float) 
             .execute(
                 """
                 SELECT 1 FROM password_reset_tokens
-                WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?
+                WHERE token_hash = %s AND used_at IS NULL AND expires_at > %s
                 """,
                 (token_hash, now),
             )
@@ -535,21 +566,21 @@ def update_grade(state: dict[str, Any], course_id: str, student_id: str, score: 
     """Cập nhật kiểu last-write-wins (endpoint lõi) và tăng version."""
     with state["lock"]:
         connection = state["connection"]
-        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("BEGIN")
         try:
             connection.execute(
                 """
-                UPDATE enrollments SET score = ?, version = version + 1
-                WHERE course_id = ? AND student_id = ?
+                UPDATE enrollments SET score = %s, version = version + 1
+                WHERE course_id = %s AND student_id = %s
                 """,
                 (score, course_id, student_id),
             )
             row = connection.execute(
-                "SELECT version FROM enrollments WHERE course_id = ? AND student_id = ?",
+                "SELECT version FROM enrollments WHERE course_id = %s AND student_id = %s",
                 (course_id, student_id),
             ).fetchone()
             connection.execute("COMMIT")
-        except sqlite3.Error:
+        except psycopg.Error:
             connection.execute("ROLLBACK")
             raise
         state["enrollments"][(course_id, student_id)] = score
@@ -563,7 +594,7 @@ def read_grade_version(
         row = (
             state["connection"]
             .execute(
-                "SELECT score, version FROM enrollments WHERE course_id = ? AND student_id = ?",
+                "SELECT score, version FROM enrollments WHERE course_id = %s AND student_id = %s",
                 (course_id, student_id),
             )
             .fetchone()
@@ -581,12 +612,12 @@ def update_grade_if_version(
     """Trả (updated, new_version, current_score)."""
     with state["lock"]:
         connection = state["connection"]
-        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("BEGIN")
         try:
             cursor = connection.execute(
                 """
-                UPDATE enrollments SET score = ?, version = version + 1
-                 WHERE course_id = ? AND student_id = ? AND version = ?
+                UPDATE enrollments SET score = %s, version = version + 1
+                 WHERE course_id = %s AND student_id = %s AND version = %s
                 """,
                 (score, course_id, student_id, expected_version),
             )
@@ -594,7 +625,7 @@ def update_grade_if_version(
                 row = connection.execute(
                     """
                     SELECT score, version FROM enrollments
-                     WHERE course_id = ? AND student_id = ?
+                     WHERE course_id = %s AND student_id = %s
                     """,
                     (course_id, student_id),
                 ).fetchone()
@@ -603,11 +634,11 @@ def update_grade_if_version(
                     return False, None, None
                 return False, int(row[1]), row[0]
             row = connection.execute(
-                "SELECT version FROM enrollments WHERE course_id = ? AND student_id = ?",
+                "SELECT version FROM enrollments WHERE course_id = %s AND student_id = %s",
                 (course_id, student_id),
             ).fetchone()
             connection.execute("COMMIT")
-        except sqlite3.Error:
+        except psycopg.Error:
             connection.execute("ROLLBACK")
             raise
         state["enrollments"][(course_id, student_id)] = score
@@ -625,12 +656,12 @@ def create_enrollment(
     """Insert the enrollment and its outbox event in one transaction."""
     with state["lock"]:
         connection = state["connection"]
-        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("BEGIN")
         try:
             connection.execute(
                 """
                 INSERT INTO enrollments (course_id, student_id, score)
-                VALUES (?, ?, ?)
+                VALUES (%s, %s, %s)
                 """,
                 (course_id, student_id, 0.0),
             )
@@ -640,7 +671,7 @@ def create_enrollment(
                     event_id, type, payload, status, attempts,
                     next_attempt_at, created_at
                 )
-                VALUES (?, ?, ?, 'PENDING', 0, ?, ?)
+                VALUES (%s, %s, %s, 'PENDING', 0, %s, %s)
                 """,
                 (
                     event["eventId"],
@@ -651,10 +682,10 @@ def create_enrollment(
                 ),
             )
             connection.execute("COMMIT")
-        except sqlite3.IntegrityError as error:
+        except psycopg.IntegrityError as error:
             connection.execute("ROLLBACK")
             raise ValueError("Enrollment already exists") from error
-        except sqlite3.Error:
+        except psycopg.Error:
             connection.execute("ROLLBACK")
             raise
         state["enrollments"][(course_id, student_id)] = 0.0
@@ -669,7 +700,7 @@ def recover_expired_outbox(state: dict[str, Any], now: float) -> int:
                SET status = 'PENDING', locked_until = NULL
              WHERE status = 'SENDING'
                AND locked_until IS NOT NULL
-               AND locked_until <= ?
+               AND locked_until <= %s
             """,
             (now,),
         )
@@ -681,33 +712,33 @@ def claim_outbox_batch(
 ) -> list[dict[str, Any]]:
     """Atomically move due events to SENDING and return them.
 
-    The SELECT and the UPDATE share one BEGIN IMMEDIATE transaction, so a second
+    The SELECT and the UPDATE share one BEGIN transaction, so a second
     worker (in this process or another one) cannot claim the same rows.
     """
     with state["lock"]:
         connection = state["connection"]
-        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("BEGIN")
         try:
             rows = connection.execute(
                 """
                 SELECT id, event_id, type, payload, attempts
                   FROM outbox_events
-                 WHERE status = 'PENDING' AND next_attempt_at <= ?
+                 WHERE status = 'PENDING' AND next_attempt_at <= %s
                  ORDER BY id
-                 LIMIT ?
+                 LIMIT %s
                 """,
                 (now, limit),
             ).fetchall()
             if rows:
-                connection.executemany(
+                connection.cursor().executemany(
                     """
-                    UPDATE outbox_events SET status = 'SENDING', locked_until = ?
-                     WHERE id = ? AND status = 'PENDING'
+                    UPDATE outbox_events SET status = 'SENDING', locked_until = %s
+                     WHERE id = %s AND status = 'PENDING'
                     """,
                     [(now + lease_seconds, row[0]) for row in rows],
                 )
             connection.execute("COMMIT")
-        except sqlite3.Error:
+        except psycopg.Error:
             connection.execute("ROLLBACK")
             raise
     return [
@@ -726,8 +757,8 @@ def mark_outbox_sent(state: dict[str, Any], event_id: str, now: float) -> None:
         state["connection"].execute(
             """
             UPDATE outbox_events
-               SET status = 'SENT', sent_at = ?, locked_until = NULL, last_error = NULL
-             WHERE event_id = ?
+               SET status = 'SENT', sent_at = %s, locked_until = NULL, last_error = NULL
+             WHERE event_id = %s
             """,
             (now, event_id),
         )
@@ -743,10 +774,10 @@ def mark_outbox_failed(
 ) -> str:
     with state["lock"]:
         connection = state["connection"]
-        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("BEGIN")
         try:
             row = connection.execute(
-                "SELECT attempts FROM outbox_events WHERE event_id = ?",
+                "SELECT attempts FROM outbox_events WHERE event_id = %s",
                 (event_id,),
             ).fetchone()
             if row is None:
@@ -757,14 +788,14 @@ def mark_outbox_failed(
             connection.execute(
                 """
                 UPDATE outbox_events
-                   SET status = ?, attempts = ?, next_attempt_at = ?,
-                       locked_until = NULL, last_error = ?
-                 WHERE event_id = ?
+                   SET status = %s, attempts = %s, next_attempt_at = %s,
+                       locked_until = NULL, last_error = %s
+                 WHERE event_id = %s
                 """,
                 (status, attempts, now + retry_delay, error, event_id),
             )
             connection.execute("COMMIT")
-        except sqlite3.Error:
+        except psycopg.Error:
             connection.execute("ROLLBACK")
             raise
         return status
@@ -783,20 +814,20 @@ def outbox_counts(state: dict[str, Any]) -> dict[str, int]:
 def add_enrollment(state: dict[str, Any], course_id: str, student_id: str) -> None:
     with state["lock"]:
         connection = state["connection"]
-        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("BEGIN")
         try:
             connection.execute(
                 """
                 INSERT INTO enrollments (course_id, student_id, score)
-                VALUES (?, ?, 0.0)
+                VALUES (%s, %s, 0.0)
                 """,
                 (course_id, student_id),
             )
             connection.execute("COMMIT")
-        except sqlite3.IntegrityError as error:
+        except psycopg.IntegrityError as error:
             connection.execute("ROLLBACK")
             raise ValueError("Enrollment already exists") from error
-        except sqlite3.Error:
+        except psycopg.Error:
             connection.execute("ROLLBACK")
             raise
         state["enrollments"][(course_id, student_id)] = 0.0
@@ -805,14 +836,14 @@ def add_enrollment(state: dict[str, Any], course_id: str, student_id: str) -> No
 def remove_enrollment(state: dict[str, Any], course_id: str, student_id: str) -> bool:
     with state["lock"]:
         connection = state["connection"]
-        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("BEGIN")
         try:
             cursor = connection.execute(
-                "DELETE FROM enrollments WHERE course_id = ? AND student_id = ?",
+                "DELETE FROM enrollments WHERE course_id = %s AND student_id = %s",
                 (course_id, student_id),
             )
             connection.execute("COMMIT")
-        except sqlite3.Error:
+        except psycopg.Error:
             connection.execute("ROLLBACK")
             raise
         removed = cursor.rowcount > 0
@@ -824,11 +855,11 @@ def remove_enrollment(state: dict[str, Any], course_id: str, student_id: str) ->
 def set_user_role(state: dict[str, Any], user_id: str, role: str) -> None:
     with state["lock"]:
         connection = state["connection"]
-        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("BEGIN")
         try:
-            connection.execute("UPDATE users SET role = ? WHERE id = ?", (role, user_id))
+            connection.execute("UPDATE users SET role = %s WHERE id = %s", (role, user_id))
             connection.execute("COMMIT")
-        except sqlite3.Error:
+        except psycopg.Error:
             connection.execute("ROLLBACK")
             raise
         user = state["users"].get(user_id)
@@ -840,7 +871,7 @@ def count_users_with_role(state: dict[str, Any], role: str) -> int:
     with state["lock"]:
         row = (
             state["connection"]
-            .execute("SELECT COUNT(*) FROM users WHERE role = ?", (role,))
+            .execute("SELECT COUNT(*) FROM users WHERE role = %s", (role,))
             .fetchone()
         )
     return int(row[0]) if row is not None else 0
@@ -857,13 +888,13 @@ def set_user_profile(
     assignments: list[str] = []
     params: list[Any] = []
     if name is not None:
-        assignments.append("name = ?")
+        assignments.append("name = %s")
         params.append(name)
     if bio is not None:
-        assignments.append("bio = ?")
+        assignments.append("bio = %s")
         params.append(bio)
     if phone is not None:
-        assignments.append("phone = ?")
+        assignments.append("phone = %s")
         params.append(phone)
     if not assignments:
         return
@@ -871,11 +902,11 @@ def set_user_profile(
 
     with state["lock"]:
         connection = state["connection"]
-        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("BEGIN")
         try:
-            connection.execute(f"UPDATE users SET {', '.join(assignments)} WHERE id = ?", params)
+            connection.execute(f"UPDATE users SET {', '.join(assignments)} WHERE id = %s", params)
             connection.execute("COMMIT")
-        except sqlite3.Error:
+        except psycopg.Error:
             connection.execute("ROLLBACK")
             raise
         user = state["users"].get(user_id)
@@ -890,13 +921,13 @@ def set_user_profile(
 def update_password_hash(state: dict[str, Any], user_id: str, password_hash: bytes) -> None:
     with state["lock"]:
         connection = state["connection"]
-        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("BEGIN")
         try:
             connection.execute(
-                "UPDATE users SET pw_hash = ? WHERE id = ?", (password_hash, user_id)
+                "UPDATE users SET pw_hash = %s WHERE id = %s", (password_hash, user_id)
             )
             connection.execute("COMMIT")
-        except sqlite3.Error:
+        except psycopg.Error:
             connection.execute("ROLLBACK")
             raise
         user = state["users"].get(user_id)
@@ -907,13 +938,13 @@ def update_password_hash(state: dict[str, Any], user_id: str, password_hash: byt
 def set_user_locked(state: dict[str, Any], user_id: str, locked: bool) -> None:
     with state["lock"]:
         connection = state["connection"]
-        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("BEGIN")
         try:
             connection.execute(
-                "UPDATE users SET locked = ? WHERE id = ?", (1 if locked else 0, user_id)
+                "UPDATE users SET locked = %s WHERE id = %s", (1 if locked else 0, user_id)
             )
             connection.execute("COMMIT")
-        except sqlite3.Error:
+        except psycopg.Error:
             connection.execute("ROLLBACK")
             raise
         state["locked"][user_id] = locked
@@ -923,14 +954,14 @@ def create_course(state: dict[str, Any], *, name: str, instructor_id: str) -> di
     course = {"id": "c_" + uuid.uuid4().hex, "name": name, "instructorId": instructor_id}
     with state["lock"]:
         connection = state["connection"]
-        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("BEGIN")
         try:
             connection.execute(
-                "INSERT INTO courses (id, name, instructor_id) VALUES (?, ?, ?)",
+                "INSERT INTO courses (id, name, instructor_id) VALUES (%s, %s, %s)",
                 (course["id"], course["name"], course["instructorId"]),
             )
             connection.execute("COMMIT")
-        except sqlite3.Error:
+        except psycopg.Error:
             connection.execute("ROLLBACK")
             raise
         state["courses"][course["id"]] = course
@@ -940,16 +971,16 @@ def create_course(state: dict[str, Any], *, name: str, instructor_id: str) -> di
 def update_course(state: dict[str, Any], course_id: str, name: str) -> dict[str, Any] | None:
     with state["lock"]:
         connection = state["connection"]
-        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("BEGIN")
         try:
             cursor = connection.execute(
-                "UPDATE courses SET name = ? WHERE id = ?", (name, course_id)
+                "UPDATE courses SET name = %s WHERE id = %s", (name, course_id)
             )
             if cursor.rowcount == 0:
                 connection.execute("ROLLBACK")
                 return None
             connection.execute("COMMIT")
-        except sqlite3.Error:
+        except psycopg.Error:
             connection.execute("ROLLBACK")
             raise
         if course_id in state["courses"]:
@@ -960,28 +991,28 @@ def update_course(state: dict[str, Any], course_id: str, name: str) -> dict[str,
 def delete_course(state: dict[str, Any], course_id: str) -> bool:
     with state["lock"]:
         connection = state["connection"]
-        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("BEGIN")
         try:
             connection.execute(
                 "DELETE FROM comments WHERE thread_id IN"
-                " (SELECT id FROM threads WHERE course_id = ?)",
+                " (SELECT id FROM threads WHERE course_id = %s)",
                 (course_id,),
             )
-            connection.execute("DELETE FROM threads WHERE course_id = ?", (course_id,))
+            connection.execute("DELETE FROM threads WHERE course_id = %s", (course_id,))
             connection.execute(
                 "DELETE FROM submissions WHERE assignment_id IN"
-                " (SELECT id FROM assignments WHERE course_id = ?)",
+                " (SELECT id FROM assignments WHERE course_id = %s)",
                 (course_id,),
             )
-            connection.execute("DELETE FROM assignments WHERE course_id = ?", (course_id,))
-            connection.execute("DELETE FROM announcements WHERE course_id = ?", (course_id,))
-            connection.execute("DELETE FROM enrollments WHERE course_id = ?", (course_id,))
-            cursor = connection.execute("DELETE FROM courses WHERE id = ?", (course_id,))
+            connection.execute("DELETE FROM assignments WHERE course_id = %s", (course_id,))
+            connection.execute("DELETE FROM announcements WHERE course_id = %s", (course_id,))
+            connection.execute("DELETE FROM enrollments WHERE course_id = %s", (course_id,))
+            cursor = connection.execute("DELETE FROM courses WHERE id = %s", (course_id,))
             if cursor.rowcount == 0:
                 connection.execute("ROLLBACK")
                 return False
             connection.execute("COMMIT")
-        except sqlite3.Error:
+        except psycopg.Error:
             connection.execute("ROLLBACK")
             raise
         state["courses"].pop(course_id, None)
@@ -1028,17 +1059,17 @@ def create_course_request(
     }
     with state["lock"]:
         connection = state["connection"]
-        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("BEGIN")
         try:
             connection.execute(
                 """
                 INSERT INTO course_requests (id, name, instructor_id, status, created_at)
-                VALUES (?, ?, ?, 'PENDING', ?)
+                VALUES (%s, %s, %s, 'PENDING', %s)
                 """,
                 (request["id"], name, instructor_id, now),
             )
             connection.execute("COMMIT")
-        except sqlite3.Error:
+        except psycopg.Error:
             connection.execute("ROLLBACK")
             raise
     return request
@@ -1077,7 +1108,7 @@ def list_course_requests(
                 .execute(
                     """
                 SELECT id, name, instructor_id, status, created_at, decided_at, decided_by
-                  FROM course_requests WHERE instructor_id = ? ORDER BY created_at
+                  FROM course_requests WHERE instructor_id = %s ORDER BY created_at
                 """,
                     (instructor_id,),
                 )
@@ -1093,7 +1124,7 @@ def get_course_request(state: dict[str, Any], request_id: str) -> dict[str, Any]
             .execute(
                 """
             SELECT id, name, instructor_id, status, created_at, decided_at, decided_by
-              FROM course_requests WHERE id = ?
+              FROM course_requests WHERE id = %s
             """,
                 (request_id,),
             )
@@ -1113,13 +1144,13 @@ def approve_course_request(
     """Tạo môn và đóng yêu cầu trong cùng một transaction."""
     with state["lock"]:
         connection = state["connection"]
-        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("BEGIN")
         try:
             cursor = connection.execute(
                 """
                 UPDATE course_requests
-                   SET status = 'APPROVED', decided_at = ?, decided_by = ?
-                 WHERE id = ? AND status = 'PENDING'
+                   SET status = 'APPROVED', decided_at = %s, decided_by = %s
+                 WHERE id = %s AND status = 'PENDING'
                 """,
                 (now, decided_by, request_id),
             )
@@ -1127,11 +1158,11 @@ def approve_course_request(
                 connection.execute("ROLLBACK")
                 return False
             connection.execute(
-                "INSERT INTO courses (id, name, instructor_id) VALUES (?, ?, ?)",
+                "INSERT INTO courses (id, name, instructor_id) VALUES (%s, %s, %s)",
                 (course["id"], course["name"], course["instructorId"]),
             )
             connection.execute("COMMIT")
-        except sqlite3.Error:
+        except psycopg.Error:
             connection.execute("ROLLBACK")
             raise
         state["courses"][course["id"]] = course
@@ -1145,8 +1176,8 @@ def reject_course_request(
         cursor = state["connection"].execute(
             """
             UPDATE course_requests
-               SET status = 'REJECTED', decided_at = ?, decided_by = ?
-             WHERE id = ? AND status = 'PENDING'
+               SET status = 'REJECTED', decided_at = %s, decided_by = %s
+             WHERE id = %s AND status = 'PENDING'
             """,
             (now, decided_by, request_id),
         )
@@ -1209,13 +1240,13 @@ def create_assignment(
     }
     with state["lock"]:
         connection = state["connection"]
-        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("BEGIN")
         try:
             connection.execute(
                 """
                 INSERT INTO assignments
                     (id, course_id, title, description, due_at, created_by, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     assignment["id"],
@@ -1228,7 +1259,7 @@ def create_assignment(
                 ),
             )
             connection.execute("COMMIT")
-        except sqlite3.Error:
+        except psycopg.Error:
             connection.execute("ROLLBACK")
             raise
     return assignment
@@ -1241,7 +1272,7 @@ def get_assignment(state: dict[str, Any], assignment_id: str) -> dict[str, Any] 
             .execute(
                 """
             SELECT id, course_id, title, description, due_at, created_by, created_at
-              FROM assignments WHERE id = ?
+              FROM assignments WHERE id = %s
             """,
                 (assignment_id,),
             )
@@ -1257,7 +1288,7 @@ def list_assignments(state: dict[str, Any], course_id: str) -> list[dict[str, An
             .execute(
                 """
             SELECT id, course_id, title, description, due_at, created_by, created_at
-              FROM assignments WHERE course_id = ? ORDER BY created_at
+              FROM assignments WHERE course_id = %s ORDER BY created_at
             """,
                 (course_id,),
             )
@@ -1279,13 +1310,13 @@ def create_submission(
     """Trả ('created'|'unchanged'|'conflict', submission)."""
     with state["lock"]:
         connection = state["connection"]
-        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("BEGIN")
         try:
             row = connection.execute(
                 """
                 SELECT id, assignment_id, student_id, content, submitted_at,
                        file_name, file_path, grade, feedback, graded_by, graded_at
-                  FROM submissions WHERE assignment_id = ? AND student_id = ?
+                  FROM submissions WHERE assignment_id = %s AND student_id = %s
                 """,
                 (assignment_id, student_id),
             ).fetchone()
@@ -1310,7 +1341,7 @@ def create_submission(
                 """
                 INSERT INTO submissions
                     (id, assignment_id, student_id, content, submitted_at, file_name, file_path)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     submission["id"],
@@ -1323,7 +1354,7 @@ def create_submission(
                 ),
             )
             connection.execute("COMMIT")
-        except sqlite3.Error:
+        except psycopg.Error:
             connection.execute("ROLLBACK")
             raise
     return "created", submission
@@ -1339,7 +1370,7 @@ def get_submission(
                 """
             SELECT id, assignment_id, student_id, content, submitted_at,
                    file_name, file_path, grade, feedback, graded_by, graded_at
-              FROM submissions WHERE assignment_id = ? AND student_id = ?
+              FROM submissions WHERE assignment_id = %s AND student_id = %s
             """,
                 (assignment_id, student_id),
             )
@@ -1356,7 +1387,7 @@ def list_submissions(state: dict[str, Any], assignment_id: str) -> list[dict[str
                 """
             SELECT id, assignment_id, student_id, content, submitted_at,
                    file_name, file_path, grade, feedback, graded_by, graded_at
-              FROM submissions WHERE assignment_id = ? ORDER BY submitted_at
+              FROM submissions WHERE assignment_id = %s ORDER BY submitted_at
             """,
                 (assignment_id,),
             )
@@ -1373,7 +1404,7 @@ def list_student_submissions(state: dict[str, Any], student_id: str) -> list[dic
                 """
             SELECT id, assignment_id, student_id, content, submitted_at,
                    file_name, file_path, grade, feedback, graded_by, graded_at
-              FROM submissions WHERE student_id = ? ORDER BY submitted_at
+              FROM submissions WHERE student_id = %s ORDER BY submitted_at
             """,
                 (student_id,),
             )
@@ -1390,7 +1421,7 @@ def get_submission_by_id(state: dict[str, Any], submission_id: str) -> dict[str,
                 """
             SELECT id, assignment_id, student_id, content, submitted_at,
                    file_name, file_path, grade, feedback, graded_by, graded_at
-              FROM submissions WHERE id = ?
+              FROM submissions WHERE id = %s
             """,
                 (submission_id,),
             )
@@ -1410,13 +1441,13 @@ def grade_submission(
 ) -> dict[str, Any] | None:
     with state["lock"]:
         connection = state["connection"]
-        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("BEGIN")
         try:
             cursor = connection.execute(
                 """
                 UPDATE submissions
-                   SET grade = ?, feedback = ?, graded_by = ?, graded_at = ?
-                 WHERE id = ?
+                   SET grade = %s, feedback = %s, graded_by = %s, graded_at = %s
+                 WHERE id = %s
                 """,
                 (grade, feedback, graded_by, now, submission_id),
             )
@@ -1427,12 +1458,12 @@ def grade_submission(
                 """
                 SELECT id, assignment_id, student_id, content, submitted_at,
                        file_name, file_path, grade, feedback, graded_by, graded_at
-                  FROM submissions WHERE id = ?
+                  FROM submissions WHERE id = %s
                 """,
                 (submission_id,),
             ).fetchone()
             connection.execute("COMMIT")
-        except sqlite3.Error:
+        except psycopg.Error:
             connection.execute("ROLLBACK")
             raise
         return _submission_view(row) if row is not None else None
@@ -1489,13 +1520,13 @@ def create_announcement(
     }
     with state["lock"]:
         connection = state["connection"]
-        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("BEGIN")
         try:
             connection.execute(
                 """
                 INSERT INTO announcements
                     (id, course_id, title, body, created_by, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 """,
                 (
                     announcement["id"],
@@ -1512,7 +1543,7 @@ def create_announcement(
                 SELECT u.email, u.name
                   FROM enrollments e
                   JOIN users u ON e.student_id = u.id
-                 WHERE e.course_id = ?
+                 WHERE e.course_id = %s
                 """,
                 (course_id,),
             ).fetchall()
@@ -1534,12 +1565,12 @@ def create_announcement(
                         event_id, type, payload, status, attempts,
                         next_attempt_at, created_at
                     )
-                    VALUES (?, 'announcement.posted', ?, 'PENDING', 0, ?, ?)
+                    VALUES (%s, 'announcement.posted', %s, 'PENDING', 0, %s, %s)
                     """,
                     (event_id, payload, now, now),
                 )
             connection.execute("COMMIT")
-        except sqlite3.Error:
+        except psycopg.Error:
             connection.execute("ROLLBACK")
             raise
     return announcement
@@ -1552,7 +1583,7 @@ def list_announcements(state: dict[str, Any], course_id: str) -> list[dict[str, 
             .execute(
                 """
             SELECT id, course_id, title, body, created_by, created_at
-              FROM announcements WHERE course_id = ? ORDER BY created_at
+              FROM announcements WHERE course_id = %s ORDER BY created_at
             """,
                 (course_id,),
             )
@@ -1568,7 +1599,7 @@ def get_announcement(state: dict[str, Any], announcement_id: str) -> dict[str, A
             .execute(
                 """
             SELECT id, course_id, title, body, created_by, created_at
-              FROM announcements WHERE id = ?
+              FROM announcements WHERE id = %s
             """,
                 (announcement_id,),
             )
@@ -1580,7 +1611,7 @@ def get_announcement(state: dict[str, Any], announcement_id: str) -> dict[str, A
 def delete_announcement(state: dict[str, Any], announcement_id: str) -> bool:
     with state["lock"]:
         cursor = state["connection"].execute(
-            "DELETE FROM announcements WHERE id = ?", (announcement_id,)
+            "DELETE FROM announcements WHERE id = %s", (announcement_id,)
         )
         return cursor.rowcount > 0
 
@@ -1604,17 +1635,17 @@ def create_thread(
     }
     with state["lock"]:
         connection = state["connection"]
-        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("BEGIN")
         try:
             connection.execute(
                 """
                 INSERT INTO threads (id, course_id, title, body, created_by, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 """,
                 (thread["id"], course_id, title, body, created_by, now),
             )
             connection.execute("COMMIT")
-        except sqlite3.Error:
+        except psycopg.Error:
             connection.execute("ROLLBACK")
             raise
     return thread
@@ -1627,7 +1658,7 @@ def list_threads(state: dict[str, Any], course_id: str) -> list[dict[str, Any]]:
             .execute(
                 """
             SELECT id, course_id, title, body, created_by, created_at
-              FROM threads WHERE course_id = ? ORDER BY created_at
+              FROM threads WHERE course_id = %s ORDER BY created_at
             """,
                 (course_id,),
             )
@@ -1643,7 +1674,7 @@ def get_thread(state: dict[str, Any], thread_id: str) -> dict[str, Any] | None:
             .execute(
                 """
             SELECT id, course_id, title, body, created_by, created_at
-              FROM threads WHERE id = ?
+              FROM threads WHERE id = %s
             """,
                 (thread_id,),
             )
@@ -1655,12 +1686,12 @@ def get_thread(state: dict[str, Any], thread_id: str) -> dict[str, Any] | None:
 def delete_thread(state: dict[str, Any], thread_id: str) -> bool:
     with state["lock"]:
         connection = state["connection"]
-        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("BEGIN")
         try:
-            connection.execute("DELETE FROM comments WHERE thread_id = ?", (thread_id,))
-            cursor = connection.execute("DELETE FROM threads WHERE id = ?", (thread_id,))
+            connection.execute("DELETE FROM comments WHERE thread_id = %s", (thread_id,))
+            cursor = connection.execute("DELETE FROM threads WHERE id = %s", (thread_id,))
             connection.execute("COMMIT")
-        except sqlite3.Error:
+        except psycopg.Error:
             connection.execute("ROLLBACK")
             raise
         return cursor.rowcount > 0
@@ -1678,17 +1709,17 @@ def create_comment(
     }
     with state["lock"]:
         connection = state["connection"]
-        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("BEGIN")
         try:
             connection.execute(
                 """
                 INSERT INTO comments (id, thread_id, body, created_by, created_at)
-                VALUES (?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s)
                 """,
                 (comment["id"], thread_id, body, created_by, now),
             )
             connection.execute("COMMIT")
-        except sqlite3.Error:
+        except psycopg.Error:
             connection.execute("ROLLBACK")
             raise
     return comment
@@ -1701,7 +1732,7 @@ def list_comments(state: dict[str, Any], thread_id: str) -> list[dict[str, Any]]
             .execute(
                 """
             SELECT id, thread_id, body, created_by, created_at
-              FROM comments WHERE thread_id = ? ORDER BY created_at
+              FROM comments WHERE thread_id = %s ORDER BY created_at
             """,
                 (thread_id,),
             )
@@ -1717,7 +1748,7 @@ def get_comment(state: dict[str, Any], comment_id: str) -> dict[str, Any] | None
             .execute(
                 """
             SELECT id, thread_id, body, created_by, created_at
-              FROM comments WHERE id = ?
+              FROM comments WHERE id = %s
             """,
                 (comment_id,),
             )
@@ -1728,7 +1759,7 @@ def get_comment(state: dict[str, Any], comment_id: str) -> dict[str, Any] | None
 
 def delete_comment(state: dict[str, Any], comment_id: str) -> bool:
     with state["lock"]:
-        cursor = state["connection"].execute("DELETE FROM comments WHERE id = ?", (comment_id,))
+        cursor = state["connection"].execute("DELETE FROM comments WHERE id = %s", (comment_id,))
         return cursor.rowcount > 0
 
 
@@ -1771,13 +1802,13 @@ def create_material(
     }
     with state["lock"]:
         connection = state["connection"]
-        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("BEGIN")
         try:
             connection.execute(
                 """
                 INSERT INTO materials
                     (id, course_id, title, file_name, file_path, file_size, created_by, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     material["id"],
@@ -1791,7 +1822,7 @@ def create_material(
                 ),
             )
             connection.execute("COMMIT")
-        except sqlite3.Error:
+        except psycopg.Error:
             connection.execute("ROLLBACK")
             raise
     return material
@@ -1804,7 +1835,7 @@ def list_materials(state: dict[str, Any], course_id: str) -> list[dict[str, Any]
             .execute(
                 """
             SELECT id, course_id, title, file_name, file_path, file_size, created_by, created_at
-              FROM materials WHERE course_id = ? ORDER BY created_at
+              FROM materials WHERE course_id = %s ORDER BY created_at
             """,
                 (course_id,),
             )
@@ -1820,7 +1851,7 @@ def get_material(state: dict[str, Any], material_id: str) -> dict[str, Any] | No
             .execute(
                 """
             SELECT id, course_id, title, file_name, file_path, file_size, created_by, created_at
-              FROM materials WHERE id = ?
+              FROM materials WHERE id = %s
             """,
                 (material_id,),
             )
@@ -1832,21 +1863,21 @@ def get_material(state: dict[str, Any], material_id: str) -> dict[str, Any] | No
 def delete_material(state: dict[str, Any], material_id: str) -> dict[str, Any] | None:
     with state["lock"]:
         connection = state["connection"]
-        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("BEGIN")
         try:
             row = connection.execute(
                 """
                 SELECT id, course_id, title, file_name, file_path, file_size, created_by, created_at
-                  FROM materials WHERE id = ?
+                  FROM materials WHERE id = %s
                 """,
                 (material_id,),
             ).fetchone()
             if row is None:
                 connection.execute("ROLLBACK")
                 return None
-            connection.execute("DELETE FROM materials WHERE id = ?", (material_id,))
+            connection.execute("DELETE FROM materials WHERE id = %s", (material_id,))
             connection.execute("COMMIT")
-        except sqlite3.Error:
+        except psycopg.Error:
             connection.execute("ROLLBACK")
             raise
     return _material_view(row)
@@ -1855,13 +1886,13 @@ def delete_material(state: dict[str, Any], material_id: str) -> dict[str, Any] |
 def set_user_avatar(state: dict[str, Any], user_id: str, avatar_path: str) -> None:
     with state["lock"]:
         connection = state["connection"]
-        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("BEGIN")
         try:
             connection.execute(
-                "UPDATE users SET avatar_path = ? WHERE id = ?", (avatar_path, user_id)
+                "UPDATE users SET avatar_path = %s WHERE id = %s", (avatar_path, user_id)
             )
             connection.execute("COMMIT")
-        except sqlite3.Error:
+        except psycopg.Error:
             connection.execute("ROLLBACK")
             raise
         state.setdefault("avatars", {})[user_id] = avatar_path
@@ -1903,14 +1934,14 @@ def create_quiz(
     quiz_id = "qz_" + uuid.uuid4().hex
     with state["lock"]:
         connection = state["connection"]
-        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("BEGIN")
         try:
             connection.execute(
                 """
                 INSERT INTO quizzes
                     (id, course_id, title, description, duration_minutes,
                      max_attempts, created_by, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     quiz_id,
@@ -1923,13 +1954,13 @@ def create_quiz(
                     now,
                 ),
             )
-            for q in questions:
+            for position, q in enumerate(questions):
                 q_id = "qq_" + uuid.uuid4().hex
                 connection.execute(
                     """
                     INSERT INTO quiz_questions
-                        (id, quiz_id, question_text, options, correct_option, points)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                        (id, quiz_id, question_text, options, correct_option, position, points)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         q_id,
@@ -1937,11 +1968,12 @@ def create_quiz(
                         q["question"],
                         json.dumps(q["options"], ensure_ascii=False),
                         int(q["correctOption"]),
+                        position,
                         float(q.get("points", 1.0)),
                     ),
                 )
             connection.execute("COMMIT")
-        except sqlite3.Error:
+        except psycopg.Error:
             connection.execute("ROLLBACK")
             raise
     return get_quiz(state, quiz_id, include_answers=True) or {}
@@ -1955,7 +1987,7 @@ def list_quizzes(state: dict[str, Any], course_id: str) -> list[dict[str, Any]]:
                 """
             SELECT id, course_id, title, description, duration_minutes,
                    max_attempts, created_by, created_at
-              FROM quizzes WHERE course_id = ? ORDER BY created_at
+              FROM quizzes WHERE course_id = %s ORDER BY created_at
             """,
                 (course_id,),
             )
@@ -1974,7 +2006,7 @@ def get_quiz(
                 """
             SELECT id, course_id, title, description, duration_minutes,
                    max_attempts, created_by, created_at
-              FROM quizzes WHERE id = ?
+              FROM quizzes WHERE id = %s
             """,
                 (quiz_id,),
             )
@@ -1988,7 +2020,7 @@ def get_quiz(
             .execute(
                 """
             SELECT id, question_text, options, correct_option, points
-              FROM quiz_questions WHERE quiz_id = ? ORDER BY rowid
+              FROM quiz_questions WHERE quiz_id = %s ORDER BY position
             """,
                 (quiz_id,),
             )
@@ -2012,16 +2044,16 @@ def get_quiz(
 def delete_quiz(state: dict[str, Any], quiz_id: str) -> bool:
     with state["lock"]:
         connection = state["connection"]
-        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("BEGIN")
         try:
-            connection.execute("DELETE FROM quiz_attempts WHERE quiz_id = ?", (quiz_id,))
-            connection.execute("DELETE FROM quiz_questions WHERE quiz_id = ?", (quiz_id,))
-            cursor = connection.execute("DELETE FROM quizzes WHERE id = ?", (quiz_id,))
+            connection.execute("DELETE FROM quiz_attempts WHERE quiz_id = %s", (quiz_id,))
+            connection.execute("DELETE FROM quiz_questions WHERE quiz_id = %s", (quiz_id,))
+            cursor = connection.execute("DELETE FROM quizzes WHERE id = %s", (quiz_id,))
             if cursor.rowcount == 0:
                 connection.execute("ROLLBACK")
                 return False
             connection.execute("COMMIT")
-        except sqlite3.Error:
+        except psycopg.Error:
             connection.execute("ROLLBACK")
             raise
         return True
@@ -2032,10 +2064,10 @@ def create_quiz_attempt(
 ) -> dict[str, Any]:
     with state["lock"]:
         connection = state["connection"]
-        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("BEGIN")
         try:
             quiz_row = connection.execute(
-                "SELECT max_attempts, duration_minutes FROM quizzes WHERE id = ?", (quiz_id,)
+                "SELECT max_attempts, duration_minutes FROM quizzes WHERE id = %s", (quiz_id,)
             ).fetchone()
             if quiz_row is None:
                 connection.execute("ROLLBACK")
@@ -2046,7 +2078,7 @@ def create_quiz_attempt(
             active = connection.execute(
                 """
                 SELECT id, started_at FROM quiz_attempts
-                 WHERE quiz_id = ? AND student_id = ? AND submitted_at IS NULL
+                 WHERE quiz_id = %s AND student_id = %s AND submitted_at IS NULL
                 """,
                 (quiz_id, student_id),
             ).fetchone()
@@ -2061,7 +2093,7 @@ def create_quiz_attempt(
                 }
 
             count = connection.execute(
-                "SELECT COUNT(*) FROM quiz_attempts WHERE quiz_id = ? AND student_id = ?",
+                "SELECT COUNT(*) FROM quiz_attempts WHERE quiz_id = %s AND student_id = %s",
                 (quiz_id, student_id),
             ).fetchone()[0]
             if count >= max_attempts:
@@ -2073,13 +2105,13 @@ def create_quiz_attempt(
                 """
                 INSERT INTO quiz_attempts
                     (id, quiz_id, student_id, attempt_number, started_at)
-                VALUES (?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s)
                 """,
                 (attempt_id, quiz_id, student_id, count + 1, now),
             )
             connection.execute("COMMIT")
-        except (sqlite3.Error, ValueError):
-            if connection.in_transaction:
+        except (psycopg.Error, ValueError):
+            if _in_transaction(connection):
                 connection.execute("ROLLBACK")
             raise
     return {
@@ -2100,7 +2132,7 @@ def get_quiz_attempt(state: dict[str, Any], attempt_id: str) -> dict[str, Any] |
                 """
             SELECT id, quiz_id, student_id, attempt_number, started_at,
                    submitted_at, score, answers
-              FROM quiz_attempts WHERE id = ?
+              FROM quiz_attempts WHERE id = %s
             """,
                 (attempt_id,),
             )
@@ -2126,12 +2158,12 @@ def submit_quiz_attempt(
     """Đối chiếu đáp án và tự động chấm điểm hoàn toàn trên server."""
     with state["lock"]:
         connection = state["connection"]
-        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("BEGIN")
         try:
             attempt_row = connection.execute(
                 """
                 SELECT id, quiz_id, student_id, started_at, submitted_at
-                  FROM quiz_attempts WHERE id = ?
+                  FROM quiz_attempts WHERE id = %s
                 """,
                 (attempt_id,),
             ).fetchone()
@@ -2144,7 +2176,7 @@ def submit_quiz_attempt(
 
             quiz_id = attempt_row[1]
             questions = connection.execute(
-                "SELECT id, correct_option, points FROM quiz_questions WHERE quiz_id = ?",
+                "SELECT id, correct_option, points FROM quiz_questions WHERE quiz_id = %s",
                 (quiz_id,),
             ).fetchall()
 
@@ -2163,14 +2195,14 @@ def submit_quiz_attempt(
             connection.execute(
                 """
                 UPDATE quiz_attempts
-                   SET submitted_at = ?, score = ?, answers = ?
-                 WHERE id = ?
+                   SET submitted_at = %s, score = %s, answers = %s
+                 WHERE id = %s
                 """,
                 (now, final_score, json.dumps(answers), attempt_id),
             )
             connection.execute("COMMIT")
-        except (sqlite3.Error, ValueError):
-            if connection.in_transaction:
+        except (psycopg.Error, ValueError):
+            if _in_transaction(connection):
                 connection.execute("ROLLBACK")
             raise
     return {
@@ -2193,7 +2225,7 @@ def list_quiz_attempts(
                     """
                 SELECT id, quiz_id, student_id, attempt_number, started_at,
                        submitted_at, score, answers
-                  FROM quiz_attempts WHERE quiz_id = ? AND student_id = ? ORDER BY started_at
+                  FROM quiz_attempts WHERE quiz_id = %s AND student_id = %s ORDER BY started_at
                 """,
                     (quiz_id, student_id),
                 )
@@ -2206,7 +2238,7 @@ def list_quiz_attempts(
                     """
                 SELECT id, quiz_id, student_id, attempt_number, started_at,
                        submitted_at, score, answers
-                  FROM quiz_attempts WHERE quiz_id = ? ORDER BY started_at
+                  FROM quiz_attempts WHERE quiz_id = %s ORDER BY started_at
                 """,
                     (quiz_id,),
                 )

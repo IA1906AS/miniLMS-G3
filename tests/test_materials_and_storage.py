@@ -1,6 +1,7 @@
 """Kiểm thử Lưu trữ tệp, Tài liệu bài giảng, Ảnh đại diện, và Chấm điểm bài tập."""
 
 import io
+import os
 
 import pytest
 
@@ -18,7 +19,7 @@ def app(tmp_path):
         {
             "TESTING": True,
             "JWT_SECRET": SECRET,
-            "DATABASE_PATH": str(tmp_path / "lms.sqlite3"),
+            "DATABASE_URL": os.environ["TEST_DATABASE_URL"],
             "AUDIT_LOG_PATH": str(tmp_path / "audit.log"),
             "UPLOAD_FOLDER": str(upload_dir / "materials"),
             "AVATAR_FOLDER": str(upload_dir / "avatars"),

@@ -1,5 +1,6 @@
 """Bước 3.3 — quản trị người dùng, khoá tài khoản và audit."""
 
+import os
 import time
 
 import pytest
@@ -18,7 +19,7 @@ def app(tmp_path):
         {
             "TESTING": True,
             "JWT_SECRET": SECRET,
-            "DATABASE_PATH": str(tmp_path / "lms.sqlite3"),
+            "DATABASE_URL": os.environ["TEST_DATABASE_URL"],
             "AUDIT_LOG_PATH": str(tmp_path / "audit.log"),
         }
     )

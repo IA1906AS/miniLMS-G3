@@ -38,7 +38,7 @@ def create_app(config: Mapping[str, Any] | None = None) -> Flask:
         "JWT_SECRET": os.environ.get("JWT_SECRET"),
         "TOKEN_TTL_SECONDS": os.environ.get("TOKEN_TTL_SECONDS", "900"),
         "AUDIT_LOG_PATH": os.environ.get("AUDIT_LOG_PATH", "audit.log"),
-        "DATABASE_PATH": os.environ.get("DATABASE_PATH", "lms.sqlite3"),
+        "DATABASE_URL": os.environ.get("DATABASE_URL", "postgresql://postgres@127.0.0.1:2010/lms"),
         "PUBLIC_BASE_URL": os.environ.get("PUBLIC_BASE_URL", "http://localhost:5000"),
         "SMTP_HOST": os.environ.get("SMTP_HOST"),
         "SMTP_PORT": os.environ.get("SMTP_PORT", "587"),
@@ -91,15 +91,13 @@ def create_app(config: Mapping[str, Any] | None = None) -> Flask:
     app.config.update(settings)
     app.config["TOKEN_TTL_SECONDS"] = token_ttl
     app.config["PUBLIC_BASE_URL"] = public_base_url.rstrip("/")
-    if app.config.get("TESTING") and "DATABASE_PATH" not in (config or {}):
-        app.config["DATABASE_PATH"] = ":memory:"
     app.secret_key = secret
     app.config["SESSION_COOKIE_HTTPONLY"] = True
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
     app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=30)
 
     clock = app.config.get("CLOCK") or time.time
-    state = store.init(app.config["DATABASE_PATH"], clock=clock)
+    state = store.init(app.config["DATABASE_URL"], clock=clock)
     state["audit_log_path"] = app.config["AUDIT_LOG_PATH"]
     app.extensions["lms_store"] = state
     audit.configure(app.config["AUDIT_LOG_PATH"])

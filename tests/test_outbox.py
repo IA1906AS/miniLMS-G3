@@ -5,6 +5,7 @@ the enrollment and its email event must commit together, delivery is
 at-least-once, retries are bounded, and pending work survives a restart.
 """
 
+import os
 import re
 import time
 
@@ -41,7 +42,7 @@ def app(tmp_path, monkeypatch):
             "TESTING": True,
             "JWT_SECRET": SECRET,
             "AUDIT_LOG_PATH": str(tmp_path / "audit.log"),
-            "DATABASE_PATH": str(tmp_path / "lms.sqlite3"),
+            "DATABASE_URL": os.environ["TEST_DATABASE_URL"],
         }
     )
 
@@ -75,7 +76,7 @@ def event_row(app, event_id: str):
         """
         SELECT event_id, type, payload, status, attempts, next_attempt_at,
                sent_at, last_error
-          FROM outbox_events WHERE event_id = ?
+          FROM outbox_events WHERE event_id = %s
         """,
         (event_id,),
     )
@@ -219,7 +220,7 @@ def test_pending_events_survive_process_restart(tmp_path):
         "TESTING": True,
         "JWT_SECRET": SECRET,
         "AUDIT_LOG_PATH": str(tmp_path / "audit.log"),
-        "DATABASE_PATH": str(tmp_path / "shared.sqlite3"),
+        "DATABASE_URL": os.environ["TEST_DATABASE_URL"],
     }
     first = create_app(config)
     client = first.test_client()

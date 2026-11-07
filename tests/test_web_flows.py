@@ -1,5 +1,6 @@
 """Các luồng HTML: đăng nhập, đăng ký, quên mật khẩu và trang tài khoản."""
 
+import os
 import re
 
 import pytest
@@ -16,7 +17,7 @@ def app(tmp_path):
         {
             "TESTING": True,
             "JWT_SECRET": SECRET,
-            "DATABASE_PATH": str(tmp_path / "lms.sqlite3"),
+            "DATABASE_URL": os.environ["TEST_DATABASE_URL"],
             "AUDIT_LOG_PATH": str(tmp_path / "audit.log"),
         }
     )

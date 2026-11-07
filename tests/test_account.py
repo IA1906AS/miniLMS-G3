@@ -1,5 +1,6 @@
 """Bước 3.1 — phiên (logout, đổi mật khẩu) và hồ sơ cá nhân."""
 
+import os
 import time
 
 import pytest
@@ -19,7 +20,7 @@ def app(tmp_path):
         {
             "TESTING": True,
             "JWT_SECRET": SECRET,
-            "DATABASE_PATH": str(tmp_path / "lms.sqlite3"),
+            "DATABASE_URL": os.environ["TEST_DATABASE_URL"],
             "AUDIT_LOG_PATH": str(tmp_path / "audit.log"),
         }
     )

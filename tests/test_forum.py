@@ -1,5 +1,7 @@
 """Bước 3.5 — thông báo, thread, comment: quyền, văn bản thuần và audit."""
 
+import os
+
 import pytest
 
 from app import create_app, forum_service
@@ -16,7 +18,7 @@ def app(tmp_path):
         {
             "TESTING": True,
             "JWT_SECRET": SECRET,
-            "DATABASE_PATH": str(tmp_path / "lms.sqlite3"),
+            "DATABASE_URL": os.environ["TEST_DATABASE_URL"],
             "AUDIT_LOG_PATH": str(tmp_path / "audit.log"),
         }
     )

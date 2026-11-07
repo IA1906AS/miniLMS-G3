@@ -1,5 +1,6 @@
 """Bước 3.4 — bài tập, nộp bài, hạn nộp và idempotency."""
 
+import os
 import time
 
 import pytest
@@ -20,7 +21,7 @@ def app(tmp_path):
         {
             "TESTING": True,
             "JWT_SECRET": SECRET,
-            "DATABASE_PATH": str(tmp_path / "lms.sqlite3"),
+            "DATABASE_URL": os.environ["TEST_DATABASE_URL"],
             "AUDIT_LOG_PATH": str(tmp_path / "audit.log"),
         }
     )
@@ -169,7 +170,7 @@ def test_late_check_uses_injected_clock(tmp_path):
         {
             "TESTING": True,
             "JWT_SECRET": SECRET,
-            "DATABASE_PATH": str(tmp_path / "clock.sqlite3"),
+            "DATABASE_URL": os.environ["TEST_DATABASE_URL"],
             "AUDIT_LOG_PATH": str(tmp_path / "audit.log"),
             "CLOCK": lambda: clock["now"],
         }

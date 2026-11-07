@@ -1,3 +1,4 @@
+import os
 import re
 from urllib.parse import parse_qs, urlparse
 
@@ -15,7 +16,7 @@ def app(tmp_path):
         {
             "TESTING": True,
             "JWT_SECRET": SECRET,
-            "DATABASE_PATH": str(tmp_path / "lms.sqlite3"),
+            "DATABASE_URL": os.environ["TEST_DATABASE_URL"],
             "AUDIT_LOG_PATH": str(tmp_path / "audit.log"),
             "PUBLIC_BASE_URL": "http://localhost:5000",
             "GOOGLE_CLIENT_ID": "google-client-id",
@@ -61,7 +62,7 @@ def test_home_register_and_account_pages_are_connected_to_sqlite(client, app):
     persisted = (
         app.extensions["lms_store"]["connection"]
         .execute(
-            "SELECT email, name, role FROM users WHERE email = ?",
+            "SELECT email, name, role FROM users WHERE email = %s",
             ("new.student@example.com",),
         )
         .fetchone()
@@ -141,11 +142,11 @@ def test_registration_and_password_reset_api_flow(client, monkeypatch):
 
 
 def test_registered_account_persists_after_app_restart(tmp_path):
-    database = str(tmp_path / "persistent.sqlite3")
+    database = os.environ["TEST_DATABASE_URL"]
     config = {
         "TESTING": True,
         "JWT_SECRET": SECRET,
-        "DATABASE_PATH": database,
+        "DATABASE_URL": database,
         "AUDIT_LOG_PATH": str(tmp_path / "audit.log"),
     }
     first = create_app(config)

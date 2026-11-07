@@ -1,5 +1,6 @@
 """Giai đoạn 3 — ma trận quyền cho các endpoint mở rộng, IDOR và token vô hiệu."""
 
+import os
 import time
 
 import pytest
@@ -17,7 +18,7 @@ def app(tmp_path):
         {
             "TESTING": True,
             "JWT_SECRET": SECRET,
-            "DATABASE_PATH": str(tmp_path / "lms.sqlite3"),
+            "DATABASE_URL": os.environ["TEST_DATABASE_URL"],
             "AUDIT_LOG_PATH": str(tmp_path / "audit.log"),
         }
     )
@@ -312,7 +313,7 @@ def test_lockout_expires_with_injected_clock(tmp_path):
         {
             "TESTING": True,
             "JWT_SECRET": SECRET,
-            "DATABASE_PATH": str(tmp_path / "clock.sqlite3"),
+            "DATABASE_URL": os.environ["TEST_DATABASE_URL"],
             "AUDIT_LOG_PATH": str(tmp_path / "audit.log"),
             "CLOCK": lambda: clock["now"],
         }
