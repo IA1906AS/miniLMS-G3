@@ -5,6 +5,11 @@ tài khoản, khóa học, điểm, đăng ký khóa học và email xác nhận
 biến bảo mật (JWT, CSRF, phân quyền, audit) và minh họa **defensive pattern #8 —
 transactional outbox** trên một luồng nghiệp vụ thật.
 
+> **Nhánh `feature/before` — bản Before của bài tập pattern:** bản này **chưa áp dụng**
+> pattern #3 (optimistic locking) và #8 (transactional outbox) cho hai luồng sửa điểm và đăng ký
+> khóa học, dùng để tái hiện hai rủi ro. Bản After đầy đủ nằm trên `main`; xem
+> [docs/before-after-patterns.md](docs/before-after-patterns.md).
+
 > Đây là **nguồn thông tin duy nhất** (single source of truth) của dự án. Quy ước code ở
 > [docs/conventions.md](docs/conventions.md), quyết định kỹ thuật ở
 > [docs/decisions/](docs/decisions/), luật làm việc cho agent ở [AGENTS.md](AGENTS.md).

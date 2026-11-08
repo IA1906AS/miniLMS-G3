@@ -19,7 +19,6 @@ from . import (
     errors,
     forum,
     gate,
-    grades_v2,
     materials,
     outbox,
     passwords,
@@ -110,7 +109,6 @@ def create_app(config: Mapping[str, Any] | None = None) -> Flask:
     app.register_blueprint(courses.bp)
     app.register_blueprint(assignments.bp)
     app.register_blueprint(forum.bp)
-    app.register_blueprint(grades_v2.bp)
     app.register_blueprint(materials.bp)
     app.register_blueprint(quizzes.bp)
 
@@ -198,7 +196,7 @@ def create_app(config: Mapping[str, Any] | None = None) -> Flask:
     def enroll() -> Any:
         course_id = schemas.parse_self_enrollment_body(request.get_json(silent=True))
         with services.using_store(state):
-            return jsonify(services.enroll_in_course(g.actor, course_id)), 201
+            return jsonify(services.enroll_in_course(g.actor, course_id, app.config)), 201
 
     @app.get("/api/docs/openapi.yaml")
     def openapi_spec() -> Any:

@@ -221,7 +221,7 @@ def account() -> str:
 def enroll_course(course_id: str) -> Any:
     try:
         with services.using_store(current_app.extensions["lms_store"]):
-            services.enroll_in_course(g.web_user, course_id)
+            services.enroll_in_course(g.web_user, course_id, current_app.config)
     except Conflict:
         flash("Bạn đã đăng ký khóa học này rồi.", "error")
     except Forbidden:
