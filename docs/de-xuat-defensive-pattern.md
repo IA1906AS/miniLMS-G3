@@ -337,7 +337,7 @@ mới). B rebase lên nhánh A, chạy lại `pytest -q` trước khi mở PR.
 Chuẩn bị:
 
 ```powershell
-$env:JWT_SECRET = "0123456789abcdef0123456789abcdef"
+$env:JWT_SECRET = "thay-bang-secret-cua-ban"  # gitleaks:allow
 $env:DATABASE_URL = "postgresql://postgres:postgres@127.0.0.1:5432/lms"
 flask --app app run
 ```
