@@ -1,59 +1,69 @@
 # Đề xuất 2 defensive pattern cho MiniLMS
 
-Tài liệu này chọn 2 pattern trong danh sách 10 pattern của bài tập, gắn trực tiếp với mã nguồn
-hiện có trong repo, và mô tả cách cài đặt + cách nghiệm thu.
+Tài liệu chọn 2 trong 10 pattern của bài tập, gắn trực tiếp với mã nguồn hiện có trong repo, và
+mô tả cách cài đặt + cách nghiệm thu. Bản cập nhật này bám theo PostgreSQL (psycopg 3) và ghi nhận
+trạng thái triển khai thực tế của cả hai pattern.
+
+**Lịch sử cập nhật:** 08/11/2026 — chuyển toàn bộ ví dụ sang PostgreSQL; cập nhật trạng thái #3
+đã cài đặt; sửa đường dẫn module và số liệu kiểm thử.
 
 ## 1. Kết luận nhanh
 
-| Thành viên | Pattern | Tính năng LMS | Module mới | Bảng mới |
-|---|---|---|---|---|
-| A | **#3 Optimistic locking** | Sửa điểm | `app/optimistic.py` | không cần (thêm cột `version` vào `enrollments`) |
-| B | **#8 Transactional outbox** | Email xác nhận đăng ký khóa học | `app/outbox.py` | `outbox_events` |
+| Thành viên | Pattern | Tính năng LMS | Module mới | Bảng mới | Trạng thái |
+|---|---|---|---|---|---|
+| A | **#3 Optimistic locking** | Sửa điểm | `app/grades_v2.py`, `app/grade_version_service.py` | không (thêm cột `version` vào `enrollments`) | Đã cài đặt |
+| B | **#8 Transactional outbox** | Email xác nhận đăng ký khóa học | `app/outbox.py` | `outbox_events` | Đã cài đặt |
 
 Lý do chọn cặp này:
 
 - Cả hai đều nằm trên miền dữ liệu **đã có** trong repo (`enrollments`, `emailer`), nên không phải
   dựng thêm một tính năng lớn chỉ để có chỗ gắn pattern.
-- Hai rủi ro khác nhau về bản chất: #3 là **tính đúng đắn khi ghi đồng thời** (lost update),
-  #8 là **tính bền của sự kiện khi có hai lần ghi** (dual-write). Không trùng lặp ý tưởng,
-  thuyết trình được hai góc nhìn bổ sung cho nhau.
-- Cả hai đều **test được bằng pytest** trên hạ tầng có sẵn (82 test đang pass), và **demo được
-  trong 5 phút** bằng 2 tab trình duyệt / 1 lần tắt SMTP.
-- Mỗi pattern chỉ cần **1 module + tối đa 1 bảng**, đúng quy định phạm vi.
+- Hai rủi ro khác nhau về bản chất: #3 là **tính đúng đắn khi ghi đồng thời** (lost update), #8 là
+  **tính bền của sự kiện khi có hai lần ghi** (dual-write). Không trùng lặp ý tưởng, thuyết trình
+  được hai góc nhìn bổ sung cho nhau.
+- Cả hai đều **test được bằng pytest** và **demo được trong 5 phút**.
+- Mỗi pattern nằm trong phạm vi cho phép: #3 chỉ thêm **một cột**, #8 thêm **một module + một bảng**.
 
 ## 2. Hiện trạng repo (căn cứ để chọn)
 
-Ứng dụng Flask + SQLite, không ORM, không queue, không worker:
+Ứng dụng Flask 3 + PostgreSQL, không ORM, dùng SQL thuần qua `psycopg` 3; mọi thao tác ghi nằm
+trong transaction tường minh (`BEGIN`/`COMMIT`) trên connection `autocommit=True`.
 
 | Thành phần | Vị trí | Ghi chú liên quan |
 |---|---|---|
-| Bảng dữ liệu | `app/store.py` | `users`, `courses`, `enrollments(course_id, student_id, score)`, `password_reset_tokens`, `oauth_accounts` |
-| Sửa điểm | `app/services.py::update_grade` → `store.update_grade` | Ghi đè vô điều kiện `UPDATE enrollments SET score = ?` — **last-write-wins** |
-| Đọc điểm | `GET /courses/<id>/grades` | Trả `studentId`, `score`; không có version/ETag |
-| Gửi mail | `app/emailer.py` | Chỉ dùng cho reset mật khẩu; ném `RuntimeError` nếu thiếu SMTP |
-| Nạp lại cache | `app/gate.py::_gate` gọi `store.refresh(state)` **mỗi request** | Cache in-memory luôn được đồng bộ từ DB trước khi vào handler |
-| Lỗi | `app/errors.py` | Đã có `Conflict` (409), `ValidationError` (400); **chưa có** 412/428 |
-| Kiểm thử | `tests/` | `82 passed`; có sẵn fixture `app`, `client`, helper `login`, `auth` |
+| Cơ sở dữ liệu | PostgreSQL 18 (dev) | DSN lấy từ `DATABASE_URL`; giá trị mặc định trong code dùng cổng 2010, còn PostgreSQL cài local thường ở 5432 — kiểm tra và đặt lại khi chạy |
+| Bảng dữ liệu | `app/store.py` | `users`, `courses`, `enrollments(course_id, student_id, score, version)`, `password_reset_tokens`, `oauth_accounts`, `outbox_events`, và các bảng bài tập/quiz/diễn đàn |
+| Sửa điểm (endpoint lõi) | `store.update_grade` | Ghi đè kiểu last-write-wins nhưng **tăng `version`** sau mỗi lần ghi |
+| Sửa điểm (endpoint v2) | `grade_version_service.update_grade` → `store.update_grade_if_version` | So khớp `version` bằng một câu `UPDATE` có điều kiện; lệch → 409 |
+| Đọc điểm | `GET /courses/<id>/grades` và `GET .../v2` | Endpoint lõi không trả version; endpoint v2 trả `version` |
+| Gửi mail | `app/emailer.py` | SMTP; ném `RuntimeError` nếu thiếu `SMTP_HOST`/`SMTP_FROM` |
+| Nạp lại cache | `app/gate.py::_gate` gọi `store.refresh(state)` mỗi request | Cache chỉ giữ `score`; `version` đọc trực tiếp từ DB |
+| Lỗi | `app/errors.py` | `AppError` → JSON `{"error": "<CODE>"}`; v2 dùng `Conflict` (409) |
+| Kiểm thử | `tests/` | 299 test được thu thập tại thời điểm cập nhật; 19 test cho optimistic locking, 15 test cho outbox |
+| Worker outbox | `app/outbox.py::start_worker` | Tuỳ chọn, bật bằng `OUTBOX_POLL_INTERVAL > 0`; tắt khi `TESTING` |
 
-Hệ quả quan trọng: vì `store.refresh` chạy mỗi request, mọi cột mới thêm vào bảng phải được
-bổ sung vào câu `SELECT` trong `refresh()` — nếu không, cache sẽ thiếu dữ liệu dù DB đúng.
+Lưu ý: vì `store.refresh` chạy mỗi request, các cột mới thêm vào bảng phải được cân nhắc khi đọc
+cache. Riêng `version` **không** nằm trong cache `state["enrollments"]`; nó được đọc bằng
+`store.read_grade_version` để tránh sai lệch giữa cache và DB.
 
 ## 3. Vì sao không chọn các pattern còn lại
 
 | # | Pattern | Đánh giá cho repo này |
 |---|---|---|
-| 1 | Exponential backoff + jitter (email điểm) | Làm được, nhưng **trùng ý tưởng với #8** (độ tin cậy của email) → 2 người sẽ va nhau về khái niệm, và cần thêm bảng trạng thái gửi |
-| 2 | Idempotency key (nộp bài tập) | Phải dựng mới tính năng "bài tập/bài nộp", và thường tốn **2 bảng** (bài nộp + khoá idempotency) → sát/vượt giới hạn phạm vi |
-| 4 | Token bucket (trợ lý AI) | Repo không có AI assistant → phải giả lập dịch vụ ngoài, dễ bị hỏi "pattern có thật sự cần không" |
-| 5 | Circuit breaker (đạo văn) | Cần một dịch vụ ngoài không tồn tại; nếu tự viết stub thì bài trở thành "tự chế lỗi để chống lỗi" |
-| 6 | Timeout + fallback (dashboard) | Không có dashboard và không có dịch vụ chậm nào; chi phí dựng mới > giá trị chứng minh |
-| 7 | Máy trạng thái (lượt làm bài) | Phải dựng toàn bộ tính năng thi + ngân hàng câu hỏi: vượt xa "một tính năng nhỏ" |
-| 9 | Bulkhead (xuất báo cáo điểm) | **Phương án dự phòng tốt nhất** nếu #8 quá nặng: chỉ cần thread pool + semaphore, không cần bảng |
-| 10 | Giữ chỗ có thời hạn (lớp giới hạn sĩ số) | Khả thi nhưng cần thêm `capacity` + bảng giữ chỗ + sweeper hết hạn; tranh chấp ghi trên SQLite khó demo gọn |
+| 1 | Exponential backoff + jitter (email điểm) | Outbox hiện dùng **retry cố định** `OUTBOX_RETRY_DELAY_SECONDS`; thêm backoff/jitter sẽ trộn #1 vào #8. Repo cũng chưa có email thông báo điểm. |
+| 2 | Idempotency key (nộp bài tập) | Đã có bài nộp và cơ chế trả lại bài cũ khi nộp trùng nội dung, nhưng chưa có khoá idempotency do client gửi; thêm bảng khoá + header sẽ vượt phạm vi "tối đa một bảng". |
+| 3 | Optimistic locking (sửa điểm) | **Đã chọn** — xem mục 4. |
+| 4 | Token bucket (trợ lý AI) | Repo không có AI assistant; phải giả lập dịch vụ ngoài. |
+| 5 | Circuit breaker (kiểm tra đạo văn) | Không có dịch vụ ngoài nào để bảo vệ. |
+| 6 | Timeout + fallback (dashboard) | Không có dashboard; chỉ có timeout rời rạc ở SMTP (15 giây) và OAuth (12 giây), không có fallback. |
+| 7 | Máy trạng thái (lượt làm bài) | Đã có `quiz_attempts` với `started_at`/`submitted_at`, chặn nộp lại và chặn quá hạn, nhưng chưa có cột `state` + bảng chuyển trạng thái tường minh; nếu chọn phải mở rộng schema. |
+| 8 | Transactional outbox (email đăng ký) | **Đã chọn** — xem mục 5. |
+| 9 | Bulkhead (xuất báo cáo điểm) | Chưa có chức năng xuất báo cáo; thêm thread pool/semaphore lúc này là tạo tính năng mới. |
+| 10 | Giữ chỗ có thời hạn (lớp giới hạn sĩ số) | Chưa có `capacity`/bảng giữ chỗ; tranh chấp ghi trên PostgreSQL có thể demo được nhưng vượt phạm vi một bảng. |
 
 ## 4. Pattern A — #3 Optimistic locking cho "Sửa điểm"
 
-### 4.1 Rủi ro cần chứng minh
+### 4.1. Rủi ro cần chứng minh
 
 Hai giảng viên (hoặc 2 tab của cùng một người) cùng mở bảng điểm:
 
@@ -64,55 +74,52 @@ T3: A lưu 8.0   -> DB = 8.0
 T4: B lưu 9.0   -> DB = 9.0   (mất thay đổi của A, không ai biết)
 ```
 
-Hiện tại `update_grade` không có khái niệm "phiên bản", nên T4 luôn thắng. Đây chính là
-"người lưu sau ghi đè thay đổi của người trước".
+Endpoint lõi `PUT /courses/<id>/grades/<sid>` vẫn là last-write-wins. Endpoint v2 được thêm để
+client có thể gửi kèm phiên bản đã đọc và bị từ chối nếu dữ liệu đã đổi.
 
-### 4.2 Phạm vi
+### 4.2. Phạm vi
 
-- Module mới: `app/optimistic.py` — chứa `parse_if_match`, `version_of`, `apply_grade_update`
-  (hàm thuần, không phụ thuộc Flask) để test được ở tầng service.
-- Dữ liệu: thêm cột, không thêm bảng:
+- Route: `app/grades_v2.py` — cặp `GET/PUT /courses/<course_id>/grades/<student_id>/v2`.
+- Nghiệp vụ: `app/grade_version_service.py` — `get_grade`, `update_grade`; không import Flask.
+- Dữ liệu: thêm **cột**, không thêm bảng:
 
 ```sql
 ALTER TABLE enrollments ADD COLUMN version INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE enrollments ADD COLUMN updated_at REAL;
 ```
 
-> Nếu giảng viên yêu cầu "đúng một bảng mới" cho mỗi pattern, dùng bảng
-> `grade_versions(course_id, student_id, version, updated_at, updated_by)` làm nguồn sự thật
-> của version và giữ nguyên `enrollments`. Cách này tốn thêm 1 lần join nhưng vẫn trong phạm vi.
+> Code hiện tại không thêm `updated_at`; nếu cần hiển thị "sửa lần cuối" thì đó là thay đổi schema
+> riêng, không thuộc pattern này.
 
-### 4.3 Hợp đồng HTTP
+### 4.3. Hợp đồng HTTP
 
-Đọc một điểm (thêm mới, phục vụ If-Match):
+Đọc một điểm:
 
 ```
-GET /courses/c1/grades/u4
+GET /courses/c1/grades/u4/v2
 200 OK
-ETag: "2"
-{"studentId": "u4", "score": 7.5, "version": 2}
+{"courseId": "c1", "studentId": "u4", "score": 7.5, "version": 0}
 ```
 
 Ghi điểm:
 
 ```
-PUT /courses/c1/grades/u4
-If-Match: "2"
-{"score": 9}
+PUT /courses/c1/grades/u4/v2
+{"score": 9, "expectedVersion": 0}
 ```
 
 | Tình huống | Mã | Body |
 |---|---|---|
-| Thiếu `If-Match` | `428` | `{"error": "PRECONDITION_REQUIRED"}` |
-| `If-Match` sai định dạng | `400` | `{"error": "VALIDATION_ERROR"}` |
-| Version cũ | `412` | `{"error": "STALE_VERSION", "current": {"score": 8.0, "version": 3}}` |
-| Hợp lệ | `200` | `{"courseId": "c1", "studentId": "u4", "score": 9, "version": 3}` + `ETag: "3"` |
-| Không có bản ghi | `404` | `{"error": "NOT_FOUND"}` |
+| Thiếu hoặc sai `expectedVersion` | `400` | `{"error": "VALIDATION_ERROR"}` |
+| Không có quyền / không phải GV phụ trách | `403` | `{"error": "FORBIDDEN"}` |
+| Không có môn hoặc không có bản ghi điểm | `404` | `{"error": "NOT_FOUND"}` |
+| Version cũ | `409` | `{"error": "CONFLICT"}` |
+| Hợp lệ | `200` | `{"courseId": "c1", "studentId": "u4", "score": 9, "version": 1}` |
 
-Cần thêm 2 lớp lỗi trong `app/errors.py`: `PreconditionRequired` (428) và `StaleVersion` (412).
-`StaleVersion` nên mang theo `current` để UI hiện hộp thoại "dữ liệu đã đổi, tải lại?".
+Khác với bản đề xuất ban đầu, implementation **không dùng `If-Match`/ETag** và trả **409** thay vì
+412/428. Lý do được ghi ở [ADR 0013](decisions/0013-optimistic-locking-diem.md): giữ nguyên hợp
+đồng của endpoint lõi và dùng body `{score, expectedVersion}` theo yêu cầu của đề bài.
 
-### 4.4 Cài đặt cốt lõi
+### 4.4. Cài đặt cốt lõi
 
 Điểm mấu chốt là **một câu UPDATE có điều kiện**, không phải đọc-rồi-ghi:
 
@@ -120,198 +127,279 @@ Cần thêm 2 lớp lỗi trong `app/errors.py`: `PreconditionRequired` (428) v�
 cursor = connection.execute(
     """
     UPDATE enrollments
-       SET score = ?, version = version + 1, updated_at = ?
-     WHERE course_id = ? AND student_id = ? AND version = ?
+       SET score = %s, version = version + 1
+     WHERE course_id = %s AND student_id = %s AND version = %s
     """,
-    (score, now, course_id, student_id, expected_version),
+    (score, course_id, student_id, expected_version),
 )
-if cursor.rowcount != 1:
-    # phân biệt "không tồn tại" và "version cũ" trong cùng transaction
+if cursor.rowcount == 0:
+    # Phân biệt "không tồn tại" và "version cũ" trong cùng transaction
     row = connection.execute(
-        "SELECT score, version FROM enrollments WHERE course_id = ? AND student_id = ?",
+        """
+        SELECT score, version FROM enrollments
+         WHERE course_id = %s AND student_id = %s
+        """,
         (course_id, student_id),
     ).fetchone()
+    connection.execute("ROLLBACK")
     if row is None:
-        raise NotFound()
-    raise StaleVersion(current={"score": row[0], "version": row[1]})
+        return False, None, None          # service đổi thành NotFound
+    return False, int(row[1]), row[0]     # service đổi thành Conflict
 ```
 
-Bọc trong `BEGIN IMMEDIATE ... COMMIT` như các hàm hiện có trong `store.py`, và giữ nguyên
-`state["lock"]` để không phá vỡ mô hình đang chạy.
+Các điểm đã sửa cho khớp codebase:
 
-Các điểm phải sửa cho khớp codebase:
+1. `store.init`: thêm cột `version` vào `CREATE TABLE enrollments` (DB mới) và `ALTER TABLE` có
+   kiểm tra `_table_columns` (DB cũ).
+2. `store.update_grade` (endpoint lõi): vẫn last-write-wins nhưng tăng `version` để client v2 phát
+   hiện được cả thay đổi do client cũ ghi.
+3. `store.update_grade_if_version`: trả `(updated, new_version, current_score)`; dùng
+   `cursor.rowcount` và `SELECT` trong cùng transaction để phân biệt 404 và 409.
+4. `store.read_grade_version`: đọc `score, version` trực tiếp từ DB, không lấy từ cache.
+5. `grade_version_service.update_grade`: kiểm tra quyền, validate điểm, gọi store, ghi audit
+   `oldScore`, `newScore`, `version`.
+6. `app/grades_v2.py`: route `GET/PUT` v2, vẫn qua `@require_role("INSTRUCTOR")` và `@store_scope`.
+7. `app/errors.py`: dùng `Conflict` (409) sẵn có; không thêm 412/428.
 
-1. `store.init`: thêm 2 cột vào `CREATE TABLE enrollments` (DB mới) và một bước
-   `ALTER TABLE` có kiểm tra `PRAGMA table_info` (DB cũ `lms.sqlite3` đã tồn tại).
-2. `store.refresh`: đọc thêm `version, updated_at`; đổi cache thành
-   `state["enrollments"][(c, s)] = {"score": ..., "version": ...}` — **hoặc** giữ nguyên dict
-   score và thêm `state["enrollment_versions"]` để giảm diện sửa. Cách thứ hai ít phá vỡ
-   `services.get_grades` và `web.account` hơn.
-3. `store.update_grade(..., expected_version)`: trả về version mới, ném `StaleVersion`/`NotFound`.
-4. `services.update_grade`: nhận `expected_version`, audit thêm `oldVersion`/`newVersion`,
-   trả kèm `version`.
-5. `app/__init__.py`: route `PUT` đọc `If-Match` qua `optimistic.parse_if_match`; thêm route `GET`
-   một điểm để lấy ETag. Route mới vẫn phải qua `@require_role` và vẫn phải chịu `gate`
-   (gate đã ép Bearer cho mọi route không thuộc `web.`) — không cần sửa `gate.py`.
-6. `web.py` (nếu có form sửa điểm): nhúng `version` vào hidden input và gửi lại khi submit.
-   Nếu chưa có form, bỏ qua — nhưng nên có để demo trực quan.
+### 4.5. Nghiệm thu
 
-### 4.5 Nghiệm thu
-
-- [ ] `PUT` không có `If-Match` → 428, điểm không đổi.
-- [ ] Hai client cùng đọc version 2; client 1 ghi thành công lên version 3; client 2 ghi với
-      `If-Match: "2"` → 412, body có `current.score` = giá trị mới nhất, DB vẫn là 9/8 của client 1.
-- [ ] Client 2 đọc lại, ghi với `"3"` → 200, version = 4.
-- [ ] 20 request song song cùng `If-Match: "2"` → **đúng 1** nhận 200, 19 nhận 412
-      (test bằng `ThreadPoolExecutor` + `app.test_client()` riêng cho mỗi thread).
-- [ ] Sinh viên/giảng viên khác khóa vẫn 403; sinh viên chưa ghi danh vẫn 404.
-- [ ] Audit log có `oldVersion`/`newVersion`, không có mật khẩu/token (test A19 vẫn xanh).
-- [ ] Toàn bộ test cũ vẫn pass; test A14 (`update` trả `{courseId, studentId, score}`) được cập
-      nhật để chấp nhận thêm trường `version`.
+- [x] `GET .../v2` trả `version` ban đầu.
+- [x] `PUT` đúng version → 200, `version` tăng 1.
+- [x] `PUT` với version cũ → 409, DB giữ nguyên giá trị của lần ghi đầu.
+- [x] Ghi qua endpoint lõi cũng tăng version, nên client v2 phát hiện được.
+- [x] Hợp đồng endpoint lõi và `GET .../grades` không đổi.
+- [x] GV khác môn / sinh viên → 403; môn hoặc bản ghi không tồn tại → 404.
+- [x] Body sai (thiếu trường, `score` ngoài 0–10, `expectedVersion` âm/không phải int) → 400.
+- [x] Audit ghi một dòng `UPDATE_GRADE` với `oldScore`, `newScore`, `version`.
+- [x] Service kiểm tra lại quyền (không chỉ dựa vào route).
+- [ ] **Chưa có** test 20 request song song cùng `expectedVersion`; nếu muốn chứng minh mạnh hơn
+      thì thêm test dùng `ThreadPoolExecutor` + `app.test_client()` riêng cho mỗi thread.
+- [ ] **Chưa có** test hai tiến trình/worker thật; hiện mới test ở tầng service và HTTP.
 
 ## 5. Pattern B — #8 Transactional outbox cho "Email xác nhận đăng ký khóa học"
 
-### 5.1 Rủi ro cần chứng minh
+### 5.1. Rủi ro cần chứng minh
 
 Đăng ký khóa học cần 2 việc: ghi `enrollments` và gửi email xác nhận. Nếu viết thẳng:
 
 ```python
-store.enroll(...)              # đã commit
-emailer.send_confirmation(...) # SMTP chết -> sinh viên đã vào lớp nhưng không có mail
+store.create_enrollment(...)   # đã commit
+emailer.send_email(...)        # SMTP chết -> sinh viên đã vào lớp nhưng không có mail
 ```
 
-hoặc gửi mail trước rồi commit thất bại → email "ma" cho một đăng ký không tồn tại.
-Đây là **dual-write**: hai hệ thống (SQLite, SMTP) không nằm trong một transaction.
+hoặc gửi mail trước rồi commit thất bại → email "ma" cho một đăng ký không tồn tại. Đây là
+**dual-write**: PostgreSQL và SMTP không nằm trong một transaction.
 
-### 5.2 Phạm vi
+### 5.2. Phạm vi
 
-- Tính năng: `POST /me/enrollments` (body `{"courseId": ...}`) — sinh viên tự đăng ký (hiện chỉ có dữ liệu
-  seed, chưa có endpoint).
-- Module mới: `app/outbox.py` — `enqueue`, `claim_batch`, `mark_sent`, `mark_failed`,
-  `drain_once`.
-- Bảng mới (đúng 1 bảng):
+- Tính năng: `POST /me/enrollments` (body `{"courseId": ...}`) — sinh viên tự đăng ký; form web
+  `POST /courses/<id>/enroll`.
+- Module mới: `app/outbox.py` — `new_event`, `build_message`, `drain_once`, `start_worker`.
+- Bảng mới (đúng 1 bảng): `outbox_events`.
+- Hàm ghi/đọc trong `app/store.py`: `create_enrollment`, `recover_expired_outbox`,
+  `claim_outbox_batch`, `mark_outbox_sent`, `mark_outbox_failed`, `outbox_counts`.
+
+### 5.3. Bảng dữ liệu (PostgreSQL)
 
 ```sql
-CREATE TABLE outbox_events (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    event_id     TEXT NOT NULL UNIQUE,       -- cũng dùng làm Message-ID
-    type         TEXT NOT NULL,              -- 'enrollment.confirmed'
-    payload      TEXT NOT NULL,              -- JSON: course, student, email
-    status       TEXT NOT NULL DEFAULT 'PENDING',  -- PENDING|SENDING|SENT|DEAD
-    attempts     INTEGER NOT NULL DEFAULT 0,
-    next_attempt_at REAL NOT NULL,
-    created_at   REAL NOT NULL,
-    sent_at      REAL,
-    last_error   TEXT
+CREATE TABLE IF NOT EXISTS outbox_events (
+    id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    event_id        TEXT NOT NULL UNIQUE,       -- cũng dùng làm Message-ID
+    type            TEXT NOT NULL,              -- 'enrollment.confirmed', 'announcement.posted'
+    payload         TEXT NOT NULL,              -- JSON: course, student, email
+    status          TEXT NOT NULL DEFAULT 'PENDING',  -- PENDING|SENDING|SENT|DEAD
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at DOUBLE PRECISION NOT NULL,
+    locked_until    DOUBLE PRECISION,
+    created_at      DOUBLE PRECISION NOT NULL,
+    sent_at         DOUBLE PRECISION,
+    last_error      TEXT
 );
-CREATE INDEX idx_outbox_due ON outbox_events (status, next_attempt_at);
+
+CREATE INDEX IF NOT EXISTS idx_outbox_due
+    ON outbox_events (status, next_attempt_at);
 ```
 
-`event_id` sinh bằng `secrets.token_urlsafe(16)` **trong transaction**; UNIQUE đảm bảo không
-tạo trùng nếu logic bị gọi lặp.
+`event_id` sinh bằng `secrets.token_urlsafe(16)` **trong transaction**; `UNIQUE` đảm bảo không tạo
+trùng nếu logic bị gọi lặp.
 
-### 5.3 Luồng ghi (transaction duy nhất, không I/O)
+### 5.4. Luồng ghi (transaction duy nhất, không I/O)
 
 ```python
-with state["lock"]:
-    connection.execute("BEGIN IMMEDIATE")
-    connection.execute("INSERT INTO enrollments (course_id, student_id, score, version) ...")
+connection.execute("BEGIN")
+try:
     connection.execute(
-        "INSERT INTO outbox_events (event_id, type, payload, next_attempt_at, created_at) ...")
+        "INSERT INTO enrollments (course_id, student_id, score) VALUES (%s, %s, %s)",
+        (course_id, student_id, 0.0),
+    )
+    connection.execute(
+        """
+        INSERT INTO outbox_events
+            (event_id, type, payload, status, attempts, next_attempt_at, created_at)
+        VALUES (%s, %s, %s, 'PENDING', 0, %s, %s)
+        """,
+        (event["eventId"], event["type"], json.dumps(event["payload"]), now, now),
+    )
     connection.execute("COMMIT")
+except psycopg.IntegrityError:
+    connection.execute("ROLLBACK")
+    raise ValueError("Enrollment already exists")   # service đổi thành 409
 ```
 
 Không gọi SMTP, không gọi mạng, không đọc file trong transaction. Nếu `INSERT enrollments` vi phạm
-PK (đã đăng ký) → rollback, trả `409 CONFLICT`, **không** sinh outbox event.
+khoá chính (đã đăng ký) → rollback, trả `409 CONFLICT`, **không** sinh outbox event.
 
-### 5.4 Luồng gửi (at-least-once)
+### 5.5. Luồng gửi (at-least-once)
 
 ```
-loop mỗi 2s (hoặc `flask outbox drain`, hoặc gọi trong test):
-  claim  = UPDATE outbox_events SET status='SENDING'
-           WHERE id IN (SELECT id FROM outbox_events
-                        WHERE status='PENDING' AND next_attempt_at <= :now
-                        ORDER BY id LIMIT 10)
-  for row in claimed:
+mỗi lần drain (hoặc mỗi OUTBOX_POLL_INTERVAL giây):
+  recover_expired_outbox(now)
+      SENDING có locked_until <= now  ->  PENDING
+  events = claim_outbox_batch(now, limit, lease_seconds)
+  for event in events:
       try:
-          transport(payload)          # hàm bơm vào, mặc định là emailer
-          UPDATE ... SET status='SENT', sent_at=:now
-      except Exception as e:
-          attempts += 1
-          if attempts >= MAX_ATTEMPTS: status='DEAD'
-          else: status='PENDING'; next_attempt_at = now + min(CAP, BASE * 2**attempts) + jitter
+          transport(config, build_message(event))
+          mark_outbox_sent(event_id, now)          -> SENT
+      except Exception:
+          mark_outbox_failed(...)                  -> PENDING (attempts+1) hoặc DEAD
 ```
 
-- `claim` phải là **một câu UPDATE** (không SELECT-rồi-UPDATE) để hai worker không giành cùng event.
-- Nếu tiến trình chết giữa `SENDING` và `SENT`: thêm `locked_until` và coi event `SENDING` quá hạn
-  là cần gửi lại (at-least-once), hoặc đơn giản là cho phép chạy lại toàn bộ `SENDING` sau restart.
-- Vì at-least-once, email có thể trùng. Chống trùng ở phía người nhận bằng cách đặt
-  `Message-ID: <{event_id}@lms.local>` — nêu rõ trong báo cáo đây là "hiệu ứng phụ được chấp nhận",
-  không phải bug.
-- `emailer.py` hiện tự dựng `smtplib` và ném `RuntimeError` khi thiếu cấu hình. Nên tách
-  `transport` qua `app.config["MAIL_TRANSPORT"]` (mặc định = hàm SMTP thật) để test bơm fake
-  và để `drain_once` test được mà không cần mạng.
+- `claim_outbox_batch` chạy `SELECT` các event đến hạn, rồi `UPDATE` từng event với điều kiện
+  `status = 'PENDING'` trong **cùng một transaction**; event được gán `locked_until = now + lease`.
+- Hiện implementation phù hợp với **một worker trong một tiến trình**. Nếu chạy nhiều worker ở nhiều
+  tiến trình, nên siết claim bằng `SELECT ... FOR UPDATE SKIP LOCKED` hoặc một câu
+  `UPDATE ... RETURNING` để bảo đảm mỗi event chỉ được đúng một worker nhận.
+- Retry dùng **delay cố định** `OUTBOX_RETRY_DELAY_SECONDS` (mặc định 2 giây), không exponential;
+  đây là chủ đích để không trộn pattern #1 vào #8.
+- Sau `OUTBOX_MAX_ATTEMPTS` (mặc định 5), event chuyển `DEAD` và giữ `last_error`.
+- Vì at-least-once, email có thể trùng. Chống trùng ở phía người nhận bằng
+  `Message-ID: <{event_id}@lms.local>` — đây là "hiệu ứng phụ được chấp nhận", không phải bug.
+- `MAIL_TRANSPORT` cho phép bơm transport giả trong test, không gọi SMTP thật.
 
-### 5.5 Nghiệm thu
+### 5.6. Nghiệm thu
 
-- [ ] Đăng ký thành công → có đúng 1 dòng `enrollments` **và** 1 dòng `outbox_events` PENDING
-      trong cùng một lần commit (test: transport giả ném lỗi, kiểm tra cả hai bảng vẫn có dữ liệu).
-- [ ] SMTP lỗi lần 1 → event quay lại PENDING với `attempts=1`, `next_attempt_at > now`;
+- [x] Đăng ký thành công → có đúng 1 dòng `enrollments` **và** 1 dòng `outbox_events` PENDING
+      trong cùng một lần commit.
+- [x] Đăng ký trùng → 409, không sinh event mới, không gửi mail.
+- [x] SMTP lỗi lần 1 → event quay lại PENDING với `attempts=1`, `next_attempt_at > now`;
       `drain_once` lần 2 (sau khi tua thời gian) → SENT, transport nhận đúng 1 email.
-- [ ] SMTP lỗi mãi → sau `MAX_ATTEMPTS` event thành DEAD, `last_error` có nội dung, không mất
-      bản ghi đăng ký.
-- [ ] Chạy `drain_once` 2 lần liên tiếp → chỉ 1 email (lần 2 không còn event PENDING).
-- [ ] Đăng ký trùng (cùng course + student) → 409, không sinh event mới, không gửi mail.
-- [ ] "Khôi phục sau sự cố": tạo event PENDING rồi tạo app mới trên cùng file DB → `drain_once`
-      gửi được (chứng minh sự kiện nằm trong DB, không nằm trong RAM).
-- [ ] Sinh viên khác không đăng ký hộ được; instructor/admin gọi endpoint → 403.
+- [x] SMTP lỗi mãi → sau `OUTBOX_MAX_ATTEMPTS` event thành DEAD, `last_error` có nội dung, không
+      mất bản ghi đăng ký.
+- [x] Chạy `drain_once` 2 lần liên tiếp → chỉ 1 email (lần 2 không còn event PENDING).
+- [x] Event SENDING quá lease được đưa về PENDING (khôi phục sau crash).
+- [x] "Khôi phục sau sự cố": tạo event PENDING rồi tạo app mới trên cùng DB → `drain_once` gửi được.
+- [x] Email có `Message-ID` ổn định theo `event_id`.
+- [x] Sinh viên khác không đăng ký hộ được; instructor/admin gọi endpoint → 403.
+- [x] CLI `flask outbox drain` / `status` hoạt động.
+- [x] Form web tạo event; worker tắt trong test.
+- [ ] **Chưa có** test nhiều worker/tiến trình tranh claim; xem ghi chú ở 5.5.
+
+### 5.7. Cấu hình
+
+| Biến | Mặc định | Ý nghĩa |
+|---|---|---|
+| `OUTBOX_MAX_ATTEMPTS` | 5 | Số lần thử trước khi DEAD |
+| `OUTBOX_RETRY_DELAY_SECONDS` | 2 | Delay cố định giữa các lần thử |
+| `OUTBOX_LEASE_SECONDS` | 60 | Thời gian giữ event ở SENDING |
+| `OUTBOX_BATCH_SIZE` | 10 | Số event mỗi lần claim |
+| `OUTBOX_POLL_INTERVAL` | 0 | 0 = tắt worker nền; > 0 = poll mỗi N giây |
 
 ## 6. Phối hợp 2 người (tránh đụng file)
 
 | File | A (#3) | B (#8) |
 |---|---|---|
-| `app/store.py` | `init` (cột version), `refresh`, `update_grade` | thêm `enroll_student` + 3 hàm outbox |
-| `app/services.py` | sửa `update_grade`, thêm `get_grade` | thêm `enroll_in_course` |
-| `app/__init__.py` | route GET 1 điểm + sửa PUT | route POST enrollments + CLI `outbox drain` |
-| `app/errors.py` | thêm 412/428 | dùng `Conflict` sẵn có |
-| `app/outbox.py`, `app/optimistic.py` | — | — |
+| `app/store.py` | `init` (cột `version`), `update_grade`, `update_grade_if_version`, `read_grade_version` | `create_enrollment` + 5 hàm outbox |
+| `app/grade_version_service.py` | toàn bộ file | — |
+| `app/grades_v2.py` | toàn bộ file | — |
+| `app/services.py` | `update_grade` (lõi) | `enroll_in_course` |
+| `app/outbox.py` | — | toàn bộ file |
+| `app/__init__.py` | không sửa | route `POST /me/enrollments` + CLI |
+| `app/errors.py` | dùng `Conflict` sẵn có | dùng `Conflict` sẵn có |
+| `tests/` | `test_grade_version.py` | `test_outbox.py` |
 
-Thứ tự merge đề xuất: **A trước, B sau** (A sửa schema `enrollments` và `refresh`, B chỉ thêm
-bảng mới + hàm mới). B rebase lên nhánh A, chạy lại `pytest -q` trước khi mở PR; cả hai cùng
-chỉnh `tests/` ở file riêng (`test_optimistic_lock.py`, `test_outbox.py`).
+Thứ tự merge đề xuất: **A trước, B sau** (A sửa schema `enrollments`; B chỉ thêm bảng mới + hàm
+mới). B rebase lên nhánh A, chạy lại `pytest -q` trước khi mở PR.
 
-## 7. Checklist nghiệm thu chung (dùng cho cả 2 pattern)
+## 7. Checklist nghiệm thu chung
 
-- [ ] Đúng phạm vi: 1 tính năng, ≤ 1 module mới, ≤ 1 bảng mới, không dùng thư viện làm sẵn pattern.
-- [ ] Logic chính nằm trong code của nhóm (SQL có điều kiện / claim batch tự viết).
-- [ ] Không phá vỡ các bất biến bảo mật đang có: gate Bearer, CSRF cho form, RBAC ở route **và**
-      service, audit log không chứa bí mật.
-- [ ] Có test chứng minh **trước khi sửa thì lỗi, sau khi sửa thì hết** (demo bằng cách tạm bỏ
-      điều kiện version / tạm gửi mail trực tiếp).
-- [ ] Có kịch bản demo 3–5 phút, chạy được trên máy sạch (`pytest -q` + 2 tab trình duyệt).
-- [ ] README có mục mô tả pattern, biến môi trường mới (`OUTBOX_POLL_INTERVAL`, `OUTBOX_MAX_ATTEMPTS`).
+- [x] Đúng phạm vi: #3 chỉ thêm cột; #8 thêm 1 module + 1 bảng; không dùng thư viện làm sẵn pattern.
+- [x] Logic chính nằm trong code của nhóm (SQL có điều kiện / claim + retry tự viết).
+- [x] Không phá vỡ bất biến bảo mật: gate Bearer, CSRF cho form, RBAC ở route **và** service,
+      audit không chứa mật khẩu/token.
+- [x] Có test chứng minh hành vi trước/sau (stale version → 409; SMTP lỗi → PENDING/DEAD).
+- [ ] Chưa có test song song 20 request cho #3.
+- [ ] Chưa có test nhiều worker tranh claim cho #8.
+- [x] README và ADR liên quan đã cập nhật.
+- [ ] Chạy `powershell -File scripts/gate.ps1` ở trạng thái xanh trước khi nộp.
 
 ## 8. Kịch bản demo gợi ý (5 phút)
 
-1. **#3**: mở 2 tab, cùng vào `/account` (hoặc trang sửa điểm) của giảng viên `an.gv@lms.test`.
-   Tab 1 lưu 9 → OK. Tab 2 (vẫn đang giữ version cũ) lưu 8 → hộp thoại "Điểm đã được người khác
-   cập nhật (hiện tại 9)" và nút tải lại. Mở `audit.log` cho thấy 2 dòng `oldVersion/newVersion`.
-2. **#8**: đặt `SMTP_HOST` sai, đăng ký khóa `c2` → 201, DB có enrollment, outbox PENDING,
-   UI báo "xác nhận sẽ được gửi". Sửa SMTP, chạy `flask outbox drain` → SENT, hộp thư có mail.
-   `sqlite3 lms.sqlite3 "select status, attempts from outbox_events"`.
+Chuẩn bị:
+
+```powershell
+$env:JWT_SECRET = "0123456789abcdef0123456789abcdef"
+$env:DATABASE_URL = "postgresql://postgres:postgres@127.0.0.1:5432/lms"
+flask --app app run
+```
+
+### #3 — hai tab sửa điểm
+
+1. Mở 2 tab, cùng vào trang sửa điểm của giảng viên `an.gv@lms.test`.
+2. Tab 1 lưu 9 → 200. Tab 2 (vẫn giữ version cũ) lưu 8 → 409 `CONFLICT`.
+3. Kiểm tra DB và audit:
+
+```powershell
+psql $env:DATABASE_URL -c "SELECT student_id, score, version FROM enrollments WHERE course_id='c1';"
+Get-Content audit.log -Tail 3
+```
+
+### #8 — SMTP lỗi rồi drain
+
+1. Đặt `SMTP_HOST` sai, đăng ký khóa `c2` → 201, DB có enrollment, outbox PENDING.
+2. Kiểm tra:
+
+```powershell
+flask --app app outbox status
+psql $env:DATABASE_URL -c "SELECT event_id, status, attempts FROM outbox_events ORDER BY id DESC LIMIT 5;"
+```
+
+3. Sửa SMTP, chạy `flask --app app outbox drain` → SENT; kiểm tra lại `outbox status`.
 
 ## 9. Trạng thái triển khai
 
-Pattern **#8 đã được cài đặt** trong repo (pattern #3 chưa):
+| Hạng mục | Trạng thái | Vị trí |
+|---|---|---|
+| Cột `enrollments.version` + `ALTER TABLE` cho DB cũ | Xong | `app/store.py::init` |
+| Ghi điểm có điều kiện version | Xong | `app/store.py::update_grade_if_version` |
+| Endpoint `GET/PUT .../v2` | Xong | `app/grades_v2.py` |
+| Nghiệp vụ + audit cho v2 | Xong | `app/grade_version_service.py` |
+| Test #3 | Xong (19 test) | `tests/test_grade_version.py` |
+| ADR #3 | Xong | `docs/decisions/0013-optimistic-locking-diem.md` |
+| Bảng `outbox_events` + các hàm claim/mark | Xong | `app/store.py` |
+| Module outbox | Xong | `app/outbox.py` |
+| Endpoint đăng ký + form web | Xong | `app/__init__.py`, `app/web.py` |
+| Gửi mail có `Message-ID` | Xong | `app/emailer.py::send_email` |
+| CLI | Xong | `flask outbox drain/status` |
+| Test #8 | Xong (15 test) | `tests/test_outbox.py` |
+| ADR #8 | Xong | `docs/decisions/0005-outbox-email-dang-ky.md` |
 
-| Hạng mục | Vị trí |
-|---|---|
-| Bảng `outbox_events` + các hàm claim/mark | `app/store.py` (`create_enrollment`, `claim_outbox_batch`, `mark_outbox_sent`, `mark_outbox_failed`, `recover_expired_outbox`, `outbox_counts`) |
-| Module outbox (build message, drain, worker) | `app/outbox.py` |
-| Endpoint đăng ký | `POST /me/enrollments` trong `app/__init__.py`, service `services.enroll_in_course` |
-| Nút đăng ký trên giao diện | `app/web.py::enroll_course`, `app/templates/account.html` |
-| Gửi mail có `Message-ID` | `app/emailer.py::send_email` |
-| CLI | `flask outbox drain [--limit N]`, `flask outbox status` |
-| Test nghiệm thu | `tests/test_outbox.py` (12 test) |
+Đã chạy `pytest tests/test_grade_version.py tests/test_outbox.py -q` ngày 08/11/2026: **34 passed**.
 
+**Khác biệt / giới hạn cần nói khi bảo vệ:**
 
+- #3 dùng `expectedVersion` trong body và trả 409, không dùng `If-Match`/ETag/412/428 (theo ADR 0013).
+- #3 hiện tách 2 file (`grade_version_service.py` và `grades_v2.py`). Nếu giảng viên đếm "module"
+  theo số file, có thể gộp blueprint vào `app/__init__.py`; logic nghiệp vụ vẫn nằm ở
+  `grade_version_service.py`.
+- Endpoint lõi vẫn last-write-wins; chỉ endpoint v2 bảo vệ khỏi lost update.
+- #8 dùng retry cố định, chưa có exponential backoff + jitter (đó là pattern #1).
+- #8 hiện phù hợp một worker; nếu chạy nhiều worker cần siết claim (xem 5.5).
+- Outbox còn được dùng cho `announcement.posted` (thông báo lớp), không chỉ email đăng ký.
+
+## 10. Tham chiếu
+
+- [README](../README.md) — cách chạy, biến môi trường, trạng thái dự án.
+- [ADR 0005](decisions/0005-outbox-email-dang-ky.md) — transactional outbox.
+- [ADR 0013](decisions/0013-optimistic-locking-diem.md) — optimistic locking cho điểm.
+- `app/store.py`, `app/outbox.py`, `app/grade_version_service.py`, `app/grades_v2.py`.
+- `tests/test_grade_version.py`, `tests/test_outbox.py`.
