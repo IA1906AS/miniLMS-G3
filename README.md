@@ -62,6 +62,14 @@ app/gate.py            nạp lại cache, CSRF (nếu có phiên), xác thực B
 
 ## 3. Cài đặt và chạy
 
+> **Chạy nhanh trên Windows:** nhấn đúp `run.bat` (hoặc gõ `run.bat` trong terminal).
+> File này tự kiểm tra/khởi động PostgreSQL, tạo database `lms`, cài thư viện còn thiếu,
+> rồi chạy Flask tại http://127.0.0.1:5000. Lần đầu chạy sẽ tạo `.env` và hỏi mật khẩu
+> PostgreSQL (lưu vào `.env`, không commit).
+>
+> Các chế độ: `run.bat` (DB + BE + FE), `run.bat db`, `run.bat app`, `run.bat test`.
+> Frontend là giao diện server-side (Jinja2) do chính Flask phục vụ nên chỉ có một tiến trình.
+
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
