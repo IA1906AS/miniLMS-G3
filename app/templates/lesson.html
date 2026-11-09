@@ -23,6 +23,32 @@
     </article>
   </section>
 
+  <section class="section">
+    <h2>Bình luận ({{ comments|length }})</h2>
+    <ul class="list">
+      {% for comment in comments %}
+        <li>
+          <strong>{{ comment.userName }}</strong>
+          <span class="hint">{{ comment.createdAt|dt }}</span>
+          <p>{{ comment.body }}</p>
+          {% if comment.userId == user.id or can_manage %}
+            <form method="post" action="{{ url_for('web.delete_lesson_comment_form', comment_id=comment.id) }}" class="inline-form">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="link-button">Xoá</button>
+            </form>
+          {% endif %}
+        </li>
+      {% else %}
+        <li>Chưa có bình luận.</li>
+      {% endfor %}
+    </ul>
+    <form method="post" action="{{ url_for('web.add_lesson_comment_form', lesson_id=lesson.id) }}" class="stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <textarea name="body" rows="2" maxlength="2000" placeholder="Viết bình luận" required></textarea>
+      <button type="submit">Gửi bình luận</button>
+    </form>
+  </section>
+
   {% if user.role == "STUDENT" %}
     <section class="section">
       {% if completed %}

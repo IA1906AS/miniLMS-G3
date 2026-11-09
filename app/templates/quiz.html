@@ -6,6 +6,7 @@
       <p class="eyebrow">BÀI KIỂM TRA</p>
       <h1>{{ quiz.title }}</h1>
       <p>{{ quiz.durationMinutes }} phút · tối đa {{ quiz.maxAttempts }} lượt</p>
+      <p><span class="badge">{{ "Cho xem đáp án" if quiz.allowAnswers else "Không xem đáp án" }}</span></p>
     </div>
     <a class="button secondary" href="{{ url_for('web.course_detail', course_id=quiz.courseId) }}">Về khoá học</a>
   </section>
@@ -27,6 +28,21 @@
           </li>
         {% endfor %}
       </ol>
+      <details>
+        <summary>Sửa quiz</summary>
+        <form method="post" action="{{ url_for('web.update_quiz_form', quiz_id=quiz.id) }}" class="stack">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input name="title" value="{{ quiz.title }}" maxlength="200" required>
+          <textarea name="description" rows="2" maxlength="2000">{{ quiz.description }}</textarea>
+          <div class="form-row">
+            <input name="durationMinutes" type="number" min="1" max="300" value="{{ quiz.durationMinutes }}" required>
+            <input name="maxAttempts" type="number" min="1" max="100" value="{{ quiz.maxAttempts }}" required>
+            <label class="choice"><input type="checkbox" name="allowAnswers" {% if quiz.allowAnswers %}checked{% endif %}> Cho xem đáp án sau khi nộp</label>
+          </div>
+          <textarea name="questions" rows="5" required>{{ questions_text }}</textarea>
+          <button type="submit">Lưu quiz</button>
+        </form>
+      </details>
       <form method="post" action="{{ url_for('web.delete_quiz_form', quiz_id=quiz.id) }}" class="inline-form">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button type="submit" class="danger">Xoá quiz</button>
@@ -36,7 +52,7 @@
     <section class="section">
       <h2>Lượt làm bài ({{ attempts|length }})</h2>
       <table>
-        <thead><tr><th>Sinh viên</th><th>Lượt</th><th>Bắt đầu</th><th>Nộp</th><th>Điểm</th></tr></thead>
+        <thead><tr><th>Sinh viên</th><th>Lượt</th><th>Bắt đầu</th><th>Nộp</th><th>Điểm</th><th>Đáp án</th></tr></thead>
         <tbody>
           {% for attempt in attempts %}
             <tr>
@@ -45,9 +61,14 @@
               <td>{{ attempt.startedAt|dt }}</td>
               <td>{{ attempt.submittedAt|dt if attempt.submittedAt else "—" }}</td>
               <td>{{ attempt.score if attempt.score is not none else "—" }}</td>
+              <td>
+                {% if attempt.submittedAt and quiz.allowAnswers %}
+                  <a href="{{ url_for('web.quiz_attempt_answers', attempt_id=attempt.id) }}">Xem</a>
+                {% else %}—{% endif %}
+              </td>
             </tr>
           {% else %}
-            <tr><td colspan="5">Chưa có lượt làm bài.</td></tr>
+            <tr><td colspan="6">Chưa có lượt làm bài.</td></tr>
           {% endfor %}
         </tbody>
       </table>
@@ -56,7 +77,7 @@
     <section class="section">
       <h2>Lượt làm bài của tôi</h2>
       <table>
-        <thead><tr><th>Lượt</th><th>Bắt đầu</th><th>Nộp</th><th>Điểm</th></tr></thead>
+        <thead><tr><th>Lượt</th><th>Bắt đầu</th><th>Nộp</th><th>Điểm</th><th>Đáp án</th></tr></thead>
         <tbody>
           {% for attempt in attempts %}
             <tr>
@@ -64,9 +85,14 @@
               <td>{{ attempt.startedAt|dt }}</td>
               <td>{{ attempt.submittedAt|dt if attempt.submittedAt else "—" }}</td>
               <td>{{ attempt.score if attempt.score is not none else "—" }}</td>
+              <td>
+                {% if attempt.submittedAt and quiz.allowAnswers %}
+                  <a href="{{ url_for('web.quiz_attempt_answers', attempt_id=attempt.id) }}">Xem</a>
+                {% else %}—{% endif %}
+              </td>
             </tr>
           {% else %}
-            <tr><td colspan="4">Bạn chưa làm bài.</td></tr>
+            <tr><td colspan="5">Bạn chưa làm bài.</td></tr>
           {% endfor %}
         </tbody>
       </table>

@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Tiến độ của tôi | LMS{% endblock %}
+{% block content %}
+  <section class="section-head">
+    <div>
+      <p class="eyebrow">TIẾN ĐỘ</p>
+      <h1>Tiến độ học của tôi</h1>
+    </div>
+  </section>
+  <section class="section">
+    <table>
+      <thead><tr><th>Khoá học</th><th>Bài học</th><th>%</th><th>Bài tập đã nộp</th><th>Điểm TB</th><th>Quiz TB</th></tr></thead>
+      <tbody>
+        {% for item in items %}
+          <tr>
+            <td><a href="{{ url_for('web.course_detail', course_id=item.courseId) }}">{{ item.courseName }}</a></td>
+            <td>{{ item.lessonsDone }}/{{ item.lessonsTotal }}</td>
+            <td>{{ item.lessonsPercent }}%</td>
+            <td>{{ item.assignmentsSubmitted }}/{{ item.assignmentsTotal }}</td>
+            <td>{{ item.avgGrade if item.avgGrade is not none else "—" }}</td>
+            <td>{{ item.avgQuizScore if item.avgQuizScore is not none else "—" }}</td>
+          </tr>
+        {% else %}
+          <tr><td colspan="6">Bạn chưa ghi danh khoá học nào.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+{% endblock %}

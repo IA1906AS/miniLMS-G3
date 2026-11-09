@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Chứng chỉ của tôi | LMS{% endblock %}
+{% block content %}
+  <section class="section-head">
+    <div><p class="eyebrow">CHỨNG CHỈ</p><h1>Chứng chỉ của tôi</h1></div>
+  </section>
+  <section class="section">
+    <table>
+      <thead><tr><th>Khoá học</th><th>Mã</th><th>Ngày cấp</th><th></th></tr></thead>
+      <tbody>
+        {% for item in items %}
+          <tr>
+            <td>{{ item.courseName }}</td>
+            <td>{{ item.code }}</td>
+            <td>{{ item.issuedAt|dt }}</td>
+            <td><a href="{{ url_for('web.certificate_page', certificate_id=item.id) }}">Xem / in</a></td>
+          </tr>
+        {% else %}
+          <tr><td colspan="4">Chưa có chứng chỉ. Hoàn thành khoá học để nhận.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+{% endblock %}

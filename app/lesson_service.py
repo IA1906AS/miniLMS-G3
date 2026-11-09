@@ -4,9 +4,10 @@ Bài học thuộc một khoá học; giảng viên phụ trách/ADMIN quản l�
 xem và đánh dấu hoàn thành. Không import Flask.
 """
 
+import datetime
 from typing import Any
 
-from . import audit
+from . import audit, badge_service
 from . import store as store_module
 from .errors import Forbidden, NotFound, ValidationError
 from .runtime import current_store
@@ -176,6 +177,8 @@ def complete_lesson(actor: dict[str, Any], lesson_id: str) -> dict[str, Any]:
         store_module.mark_lesson_complete(
             state, user_id=str(actor.get("id")), lesson_id=lesson_id, now=state["now"]()
         )
+        store_module.record_activity(state, str(actor.get("id")), datetime.date.today().isoformat())
+        badge_service.check_auto(state, str(actor.get("id")))
         audit.record(
             actor["id"],
             "LESSON_COMPLETE",

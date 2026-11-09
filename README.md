@@ -106,6 +106,13 @@ Dữ liệu mẫu lấy từ `app/seed.json` (6 tài khoản, 2 khóa học). Tr
 | `POST /lessons/<id>/complete` | sinh viên đánh dấu hoàn thành bài |
 | `GET /courses/<id>/progress` | tiến độ học của chính mình |
 | `POST /admin/users`, `DELETE /admin/users/<id>` | ADMIN tạo / xoá tài khoản |
+| `PATCH /quizzes/<id>`, `GET /quiz-attempts/<id>/answers` | sửa quiz / xem đáp án sau khi nộp |
+| `GET /courses/<id>/report`, `GET /admin/report`, `GET /me/progress` | báo cáo tiến độ, pass/fail, tiến độ cá nhân |
+| `GET|POST /messages`, `GET|POST /messages/<user_id>` | hộp thư và nhắn tin trực tiếp |
+| `GET|POST /courses/<id>/live`, `DELETE /live/<id>` | buổi học trực tuyến |
+| `GET|POST /lessons/<id>/comments`, `DELETE /lesson-comments/<id>` | bình luận dưới bài học |
+| `GET /me/certificates`, `POST /courses/<id>/certificates`, `POST /courses/<id>/certificate-rule`, `DELETE /certificates/<id>` | chứng chỉ hoàn thành khoá |
+| `GET /courses/<id>/leaderboard`, `GET /me/badges`, `POST /admin/badges` | xếp hạng, huy hiệu, streak |
 | `GET /courses`, `GET /courses/<id>` | danh sách/chi tiết môn theo quyền (GĐ3) |
 | `POST /courses` | ADMIN tạo môn, id `c_<uuid4>` |
 | `POST /course-requests`, `GET /course-requests` | GV gửi yêu cầu mở môn (ADMIN duyệt) |
@@ -209,6 +216,14 @@ Ngoài REST API, các trang HTML phục vụ đặc tả tính năng nằm dư�
 | Xuất bản / ẩn khoá học | nút trên `/ui/courses/<id>` | ADMIN, GV phụ trách |
 | Thêm / xoá sinh viên trong khoá | `/ui/courses/<id>` | ADMIN, GV phụ trách |
 | Tạo / xoá tài khoản (chọn vai trò) | `/ui/admin` | ADMIN |
+| Sửa quiz, bật/tắt xem đáp án, xem đáp án sau khi nộp | `/ui/quizzes/<id>`, `/ui/quiz-attempts/<id>/answers` | GV/ADMIN; SV xem nếu được bật |
+| Báo cáo khoá học + tải CSV, báo cáo hệ thống, tiến độ cá nhân | `/ui/courses/<id>/report`, `/ui/admin/report`, `/ui/progress` | GV/ADMIN; SV xem tiến độ mình |
+| Hộp thư, nhắn tin trực tiếp | `/ui/messages`, `/ui/messages/<user_id>` | Mọi tài khoản |
+| Live session (tạo/tham gia) | `/ui/courses/<id>` | GV/ADMIN tạo; thành viên tham gia |
+| Bình luận bài học | `/ui/lessons/<id>` | Thành viên khoá học |
+| Chứng chỉ: cấu hình, cấp/thu hồi, xem/in | `/ui/courses/<id>/certificates`, `/ui/certificates` | GV/ADMIN; SV xem của mình |
+| Bảng xếp hạng khoá học | `/ui/courses/<id>/leaderboard` | Thành viên khoá học |
+| Quản lý huy hiệu, trao huy hiệu | `/ui/admin/badges` | ADMIN |
 | Hồ sơ, ảnh đại diện, đổi mật khẩu | `/account` | Tất cả |
 | Bài tập + nộp bài + chấm điểm | `/ui/assignments/<id>` | SV/GV |
 | Quiz + làm bài | `/ui/quizzes/<id>` | SV/GV |

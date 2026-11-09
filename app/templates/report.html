@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Báo cáo khoá học | LMS{% endblock %}
+{% block content %}
+  <section class="section-head">
+    <div>
+      <p class="eyebrow">BÁO CÁO</p>
+      <h1>{{ course }}</h1>
+      <p>{{ report.students|length }} sinh viên · {{ report.passCount }} đạt · {{ report.failCount }} chưa đạt</p>
+    </div>
+    <div class="stack-inline">
+      <a class="button secondary" href="{{ url_for('web.course_report_csv', course_id=report.courseId) }}">Tải CSV</a>
+      <a class="button secondary" href="{{ url_for('web.course_detail', course_id=report.courseId) }}">Về khoá học</a>
+    </div>
+  </section>
+  <section class="section">
+    <table>
+      <thead><tr><th>Email</th><th>Họ tên</th><th>Bài học</th><th>Bài tập</th><th>Điểm TB</th><th>Quiz</th><th>Quiz TB</th><th>Kết quả</th></tr></thead>
+      <tbody>
+        {% for item in report.students %}
+          <tr>
+            <td>{{ item.email }}</td>
+            <td>{{ item.name }}</td>
+            <td>{{ item.lessonsDone }}/{{ item.lessonsTotal }}</td>
+            <td>{{ item.assignmentsSubmitted }}/{{ item.assignmentsTotal }}</td>
+            <td>{{ item.avgGrade if item.avgGrade is not none else "—" }}</td>
+            <td>{{ item.quizAttempts }}</td>
+            <td>{{ item.avgQuizScore if item.avgQuizScore is not none else "—" }}</td>
+            <td>{% if item.passed %}<span class="badge">Đạt</span>{% else %}<span class="role">Chưa</span>{% endif %}</td>
+          </tr>
+        {% else %}
+          <tr><td colspan="8">Chưa có sinh viên.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+{% endblock %}

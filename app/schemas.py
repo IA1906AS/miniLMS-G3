@@ -299,11 +299,14 @@ def parse_grade_submission_body(body: Any) -> tuple[float, str]:
     return grade, feedback
 
 
-def parse_quiz_body(body: Any) -> tuple[str, str, int, int, list[dict[str, Any]]]:
+def parse_quiz_body(
+    body: Any,
+) -> tuple[str, str, int, int, list[dict[str, Any]], bool]:
     if (
         not isinstance(body, dict)
         or not {"title", "durationMinutes", "questions"} <= set(body)
-        or not set(body) <= {"title", "description", "durationMinutes", "maxAttempts", "questions"}
+        or not set(body)
+        <= {"title", "description", "durationMinutes", "maxAttempts", "questions", "allowAnswers"}
     ):
         raise ValidationError()
 
@@ -328,6 +331,10 @@ def parse_quiz_body(body: Any) -> tuple[str, str, int, int, list[dict[str, Any]]
         or max_attempts <= 0
         or max_attempts > 100
     ):
+        raise ValidationError()
+
+    allow_answers = body.get("allowAnswers", False)
+    if not isinstance(allow_answers, bool):
         raise ValidationError()
 
     raw_questions = body["questions"]
@@ -370,7 +377,7 @@ def parse_quiz_body(body: Any) -> tuple[str, str, int, int, list[dict[str, Any]]
             }
         )
 
-    return title, description, duration, max_attempts, questions
+    return title, description, duration, max_attempts, questions, allow_answers
 
 
 def parse_quiz_submit_body(body: Any) -> dict[str, int]:

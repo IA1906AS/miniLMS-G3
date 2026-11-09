@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Đáp án: {{ quiz.title }}{% endblock %}
+{% block content %}
+  <section class="section-head">
+    <div>
+      <p class="eyebrow">ĐÁP ÁN</p>
+      <h1>{{ quiz.title }}</h1>
+      <p>Điểm: {{ data.score if data.score is not none else "—" }}</p>
+    </div>
+    <a class="button secondary" href="{{ url_for('web.quiz_detail', quiz_id=quiz.id) }}">Về bài kiểm tra</a>
+  </section>
+  <section class="section">
+    <ol class="list">
+      {% for item in data.answers %}
+        <li>
+          <strong>{{ item.question }}</strong>
+          <ul>
+            {% for option in item.options %}
+              <li>
+                {{ option }}
+                {% if loop.index0 == item.correctOption %}<span class="badge">đáp án đúng</span>{% endif %}
+                {% if loop.index0 == item.selectedOption %}<span class="role">bạn chọn</span>{% endif %}
+              </li>
+            {% endfor %}
+          </ul>
+        </li>
+      {% endfor %}
+    </ol>
+  </section>
+{% endblock %}

@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Huy hiệu | LMS{% endblock %}
+{% block content %}
+  <section class="section-head">
+    <div><p class="eyebrow">QUẢN TRỊ</p><h1>Huy hiệu</h1></div>
+    <a class="button secondary" href="{{ url_for('web.admin_panel') }}">Về quản trị</a>
+  </section>
+  <section class="section">
+    <h2>Tạo huy hiệu</h2>
+    <form method="post" action="{{ url_for('web.create_badge_form') }}" class="inline-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input name="name" placeholder="Tên huy hiệu" maxlength="120" required>
+      <input name="description" placeholder="Mô tả" maxlength="500">
+      <button type="submit">Tạo</button>
+    </form>
+  </section>
+  <section class="section">
+    <h2>Danh sách huy hiệu</h2>
+    <ul class="list">
+      {% for badge in badges %}
+        <li><strong>{{ badge.name }}</strong> — {{ badge.description }}
+          <form method="post" action="{{ url_for('web.award_badge_form', badge_id=badge.id) }}" class="inline-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <select name="userId">{% for student in students %}<option value="{{ student.id }}">{{ student.email }}</option>{% endfor %}</select>
+            <button type="submit" class="link-button">Trao</button>
+          </form>
+        </li>
+      {% else %}
+        <li>Chưa có huy hiệu.</li>
+      {% endfor %}
+    </ul>
+  </section>
+{% endblock %}

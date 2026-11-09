@@ -15,6 +15,8 @@ from . import (
     assignments,
     audit,
     auth,
+    certificates,
+    community,
     courses,
     errors,
     forum,
@@ -25,6 +27,7 @@ from . import (
     outbox,
     passwords,
     quizzes,
+    reports,
     schemas,
     services,
     store,
@@ -115,6 +118,9 @@ def create_app(config: Mapping[str, Any] | None = None) -> Flask:
     app.register_blueprint(materials.bp)
     app.register_blueprint(quizzes.bp)
     app.register_blueprint(lessons.bp)
+    app.register_blueprint(reports.bp)
+    app.register_blueprint(community.bp)
+    app.register_blueprint(certificates.bp)
 
     @app.post("/auth/login")
     def login() -> Any:

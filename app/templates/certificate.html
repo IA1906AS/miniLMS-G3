@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Chứng chỉ {{ data.code }}{% endblock %}
+{% block content %}
+  <section class="certificate">
+    <p class="eyebrow">CHỨNG CHỈ HOÀN THÀNH</p>
+    <h1>{{ data.courseName }}</h1>
+    <p>Cấp cho</p>
+    <h2>{{ data.studentName }}</h2>
+    <p>Mã chứng chỉ: <strong>{{ data.code }}</strong></p>
+    <p>Ngày cấp: {{ data.issuedAt|dt }}</p>
+    <p>Giảng viên: {{ data.instructorName }}</p>
+    {% if data.revokedAt %}<p class="notice">Chứng chỉ đã bị thu hồi.</p>{% endif %}
+  </section>
+  <p><button onclick="window.print()">In chứng chỉ</button></p>
+{% endblock %}

@@ -9,6 +9,7 @@ from typing import Any, TypeVar, cast
 
 from flask import (
     Blueprint,
+    Response,
     abort,
     current_app,
     flash,
@@ -27,6 +28,9 @@ from . import (
     assignment_service,
     audit,
     auth,
+    badge_service,
+    certificate_service,
+    community_service,
     course_service,
     forum_service,
     lesson_service,
@@ -34,6 +38,7 @@ from . import (
     oauth,
     passwords,
     quiz_service,
+    report_service,
     schemas,
     services,
     storage,
@@ -560,6 +565,7 @@ def course_detail(course_id: str) -> str:
             "quizzes": quiz_service.list_quizzes(g.web_user, course_id),
             "threads": forum_service.list_threads(g.web_user, course_id),
             "lessons": lesson_service.list_lessons(g.web_user, course_id),
+            "live_sessions": community_service.list_live_sessions(g.web_user, course_id),
             "progress": lesson_service.course_progress(g.web_user, course_id),
             "available_students": (
                 [
@@ -860,6 +866,7 @@ def create_quiz_form(course_id: str) -> Any:
                 duration_minutes=int(request.form.get("durationMinutes", "10")),
                 max_attempts=int(request.form.get("maxAttempts", "1")),
                 questions=questions,
+                allow_answers=request.form.get("allowAnswers") == "on",
             )
         )
     except (ValueError, ValidationError, AppError):
@@ -875,12 +882,59 @@ def quiz_detail(quiz_id: str) -> str:
     quiz = _call(lambda: quiz_service.get_quiz(g.web_user, quiz_id))
     attempts = _call(lambda: quiz_service.list_attempts(g.web_user, quiz_id))
     course = _state()["courses"].get(quiz["courseId"]) or {}
+    can_manage = bool(course) and _can_manage_course(course, g.web_user)
+    questions_text = ""
+    if can_manage:
+        questions_text = "\n".join(
+            " | ".join([item["question"], *item["options"], str(item["correctOption"])])
+            for item in quiz["questions"]
+        )
     return render_template(
         "quiz.html",
         user=g.web_user,
         quiz=quiz,
         attempts=attempts,
-        can_manage=bool(course) and _can_manage_course(course, g.web_user),
+        questions_text=questions_text,
+        can_manage=can_manage,
+    )
+
+
+@web.post("/ui/quizzes/<quiz_id>/update")
+@login_required
+def update_quiz_form(quiz_id: str) -> Any:
+    try:
+        questions = _parse_questions(request.form.get("questions", ""))
+        with services.using_store(_state()):
+            quiz_service.update_quiz(
+                g.web_user,
+                quiz_id,
+                title=request.form.get("title", ""),
+                description=request.form.get("description", ""),
+                duration_minutes=int(request.form.get("durationMinutes", "10")),
+                max_attempts=int(request.form.get("maxAttempts", "1")),
+                questions=questions,
+                allow_answers=request.form.get("allowAnswers") == "on",
+            )
+    except (ValueError, ValidationError, AppError):
+        flash("Không cập nhật được quiz (kiểm tra câu hỏi và thời lượng).", "error")
+    else:
+        flash("Đã cập nhật quiz.", "info")
+    return redirect(url_for("web.quiz_detail", quiz_id=quiz_id))
+
+
+@web.get("/ui/quiz-attempts/<attempt_id>/answers")
+@login_required
+def quiz_attempt_answers(attempt_id: str) -> str:
+    data = _call(lambda: quiz_service.get_attempt_answers(g.web_user, attempt_id))
+    attempt = _call(lambda: store.get_quiz_attempt(_state(), attempt_id))
+    quiz = _call(lambda: quiz_service.get_quiz(g.web_user, attempt["quizId"]))
+    return render_template(
+        "answers.html",
+        user=g.web_user,
+        data=data,
+        quiz=quiz,
+        attempt=attempt,
+        can_manage=_can_manage_course(_state()["courses"][quiz["courseId"]], g.web_user),
     )
 
 
@@ -1092,6 +1146,7 @@ def lesson_detail(lesson_id: str) -> str:
     if g.web_user["role"] == "STUDENT":
         progress = _call(lambda: lesson_service.course_progress(g.web_user, lesson["courseId"]))
         completed = lesson["id"] in progress["completedIds"]
+    comments = _call(lambda: community_service.list_lesson_comments(g.web_user, lesson_id))
     return render_template(
         "lesson.html",
         lesson=lesson,
@@ -1099,6 +1154,7 @@ def lesson_detail(lesson_id: str) -> str:
         can_manage=_can_manage_course(course, g.web_user),
         completed=completed,
         progress=progress,
+        comments=comments,
         user=g.web_user,
     )
 
@@ -1255,3 +1311,274 @@ def delete_account_form(user_id: str) -> Any:
     else:
         flash("Đã xoá tài khoản.", "info")
     return redirect(url_for("web.admin_panel"))
+
+
+# ---------- Báo cáo ----------
+
+
+@web.get("/ui/courses/<course_id>/report")
+@login_required
+def course_report_page(course_id: str) -> str:
+    report = _call(lambda: report_service.course_report(g.web_user, course_id))
+    return render_template(
+        "report.html",
+        report=report,
+        course=report.get("courseName", course_id),
+        user=g.web_user,
+    )
+
+
+@web.get("/ui/courses/<course_id>/report.csv")
+@login_required
+def course_report_csv(course_id: str) -> Response:
+    report = _call(lambda: report_service.course_report(g.web_user, course_id))
+    rows = report_service.csv_rows(report)
+    body = "\n".join(",".join(f'"{cell}"' for cell in row) for row in rows)
+    return Response(
+        body,
+        mimetype="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="report-{course_id}.csv"'},
+    )
+
+
+@web.get("/ui/progress")
+@login_required
+def my_progress_page() -> str:
+    items = _call(lambda: report_service.student_progress(g.web_user))
+    return render_template("progress.html", items=items, user=g.web_user)
+
+
+@web.get("/ui/admin/report")
+@login_required
+def admin_report_page() -> str:
+    data = _call(lambda: report_service.system_report(g.web_user))
+    return render_template("admin_report.html", data=data, user=g.web_user)
+
+
+# ---------- Tin nhắn ----------
+
+
+@web.get("/ui/messages")
+@login_required
+def messages_page() -> str:
+    items = _call(lambda: community_service.conversations(g.web_user))
+    partners = [user for user in _state()["users"].values() if user["id"] != g.web_user["id"]]
+    return render_template("messages.html", items=items, partners=partners, user=g.web_user)
+
+
+@web.get("/ui/messages/<user_id>")
+@login_required
+def message_thread_page(user_id: str) -> str:
+    messages = _call(lambda: community_service.thread(g.web_user, user_id))
+    other = _state()["users"].get(user_id)
+    return render_template("message_thread.html", messages=messages, other=other, user=g.web_user)
+
+
+@web.post("/ui/messages/<user_id>")
+@login_required
+def send_message_form(user_id: str) -> Any:
+    try:
+        with services.using_store(_state()):
+            community_service.send_message(g.web_user, user_id, request.form.get("body", ""))
+    except (ValidationError, AppError):
+        flash("Không gửi được tin nhắn.", "error")
+    return redirect(url_for("web.message_thread_page", user_id=user_id))
+
+
+# ---------- Live session ----------
+
+
+@web.post("/ui/courses/<course_id>/live")
+@login_required
+def create_live_form(course_id: str) -> Any:
+    import datetime
+
+    raw = request.form.get("startsAt", "")
+    try:
+        starts_at = datetime.datetime.fromisoformat(raw).timestamp() if raw else _state()["now"]()
+        with services.using_store(_state()):
+            community_service.create_live_session(
+                g.web_user,
+                course_id,
+                request.form.get("title", ""),
+                request.form.get("url", ""),
+                starts_at,
+            )
+    except (ValueError, ValidationError, AppError):
+        flash("Không tạo được buổi học trực tuyến.", "error")
+    else:
+        flash("Đã tạo buổi học trực tuyến.", "info")
+    return redirect(url_for("web.course_detail", course_id=course_id))
+
+
+@web.post("/ui/live/<session_id>/delete")
+@login_required
+def delete_live_form(session_id: str) -> Any:
+    session = _call(lambda: store.get_live_session(_state(), session_id))
+    try:
+        with services.using_store(_state()):
+            community_service.delete_live_session(g.web_user, session_id)
+    except AppError:
+        flash("Không xoá được buổi học.", "error")
+    else:
+        flash("Đã xoá buổi học.", "info")
+    return redirect(url_for("web.course_detail", course_id=session["courseId"]))
+
+
+# ---------- Bình luận bài học ----------
+
+
+@web.post("/ui/lessons/<lesson_id>/comments")
+@login_required
+def add_lesson_comment_form(lesson_id: str) -> Any:
+    try:
+        with services.using_store(_state()):
+            community_service.add_lesson_comment(
+                g.web_user, lesson_id, request.form.get("body", "")
+            )
+    except (ValidationError, AppError):
+        flash("Không gửi được bình luận.", "error")
+    return redirect(url_for("web.lesson_detail", lesson_id=lesson_id))
+
+
+@web.post("/ui/lesson-comments/<comment_id>/delete")
+@login_required
+def delete_lesson_comment_form(comment_id: str) -> Any:
+    comment = _call(lambda: store.get_lesson_comment(_state(), comment_id))
+    try:
+        with services.using_store(_state()):
+            community_service.delete_lesson_comment(g.web_user, comment_id)
+    except AppError:
+        flash("Không xoá được bình luận.", "error")
+    return redirect(url_for("web.lesson_detail", lesson_id=comment["lessonId"]))
+
+
+# ---------- Chứng chỉ và xếp hạng ----------
+
+
+@web.get("/ui/certificates")
+@login_required
+def my_certificates_page() -> str:
+    items = _call(lambda: certificate_service.my_certificates(g.web_user))
+    return render_template("certificates.html", items=items, user=g.web_user)
+
+
+@web.get("/ui/certificates/<certificate_id>")
+@login_required
+def certificate_page(certificate_id: str) -> str:
+    data = _call(lambda: certificate_service.certificate_data(g.web_user, certificate_id))
+    return render_template("certificate.html", data=data, user=g.web_user)
+
+
+@web.get("/ui/courses/<course_id>/certificates")
+@login_required
+def course_certificates_page(course_id: str) -> str:
+    certificates = _call(lambda: certificate_service.list_course(g.web_user, course_id))
+    course = _state()["courses"].get(course_id) or {}
+    students = [
+        user
+        for user in _state()["users"].values()
+        if user["role"] == "STUDENT" and (course_id, user["id"]) in _state()["enrollments"]
+    ]
+    return render_template(
+        "course_certificates.html",
+        certificates=certificates,
+        students=students,
+        course=course,
+        user=g.web_user,
+    )
+
+
+@web.post("/ui/courses/<course_id>/certificates")
+@login_required
+def issue_certificate_form(course_id: str) -> Any:
+    try:
+        with services.using_store(_state()):
+            certificate_service.issue(g.web_user, course_id, request.form.get("studentId", ""))
+    except (ValidationError, AppError):
+        flash("Không cấp được chứng chỉ (đã có hoặc chưa đủ điều kiện).", "error")
+    else:
+        flash("Đã cấp chứng chỉ.", "info")
+    return redirect(url_for("web.course_certificates_page", course_id=course_id))
+
+
+@web.post("/ui/courses/<course_id>/certificate-rule")
+@login_required
+def set_certificate_rule_form(course_id: str) -> Any:
+    raw = request.form.get("minGrade", "").strip()
+    try:
+        with services.using_store(_state()):
+            certificate_service.set_rule(
+                g.web_user,
+                course_id,
+                float(raw) if raw else None,
+                request.form.get("requireLessons") == "on",
+            )
+    except (ValueError, ValidationError, AppError):
+        flash("Không lưu được điều kiện cấp chứng chỉ.", "error")
+    else:
+        flash("Đã lưu điều kiện cấp chứng chỉ.", "info")
+    return redirect(url_for("web.course_certificates_page", course_id=course_id))
+
+
+@web.post("/ui/certificates/<certificate_id>/revoke")
+@login_required
+def revoke_certificate_form(certificate_id: str) -> Any:
+    certificate = _call(lambda: store.get_certificate(_state(), certificate_id))
+    try:
+        with services.using_store(_state()):
+            certificate_service.revoke(g.web_user, certificate_id)
+    except AppError:
+        flash("Không thu hồi được chứng chỉ.", "error")
+    else:
+        flash("Đã thu hồi chứng chỉ.", "info")
+    return redirect(url_for("web.course_certificates_page", course_id=certificate["courseId"]))
+
+
+@web.get("/ui/courses/<course_id>/leaderboard")
+@login_required
+def leaderboard_page(course_id: str) -> str:
+    rows = _call(lambda: certificate_service.course_leaderboard(g.web_user, course_id))
+    course = _state()["courses"].get(course_id) or {}
+    return render_template("leaderboard.html", rows=rows, course=course, user=g.web_user)
+
+
+# ---------- Huy hiệu (ADMIN) ----------
+
+
+@web.get("/ui/admin/badges")
+@login_required
+def admin_badges_page() -> str:
+    badges = _call(lambda: badge_service.list_badges(g.web_user))
+    users = [user for user in _state()["users"].values() if user["role"] == "STUDENT"]
+    return render_template("admin_badges.html", badges=badges, students=users, user=g.web_user)
+
+
+@web.post("/ui/admin/badges")
+@login_required
+def create_badge_form() -> Any:
+    try:
+        with services.using_store(_state()):
+            badge_service.create_badge(
+                g.web_user,
+                request.form.get("name", ""),
+                request.form.get("description", ""),
+            )
+    except (ValidationError, AppError):
+        flash("Không tạo được huy hiệu.", "error")
+    else:
+        flash("Đã tạo huy hiệu.", "info")
+    return redirect(url_for("web.admin_badges_page"))
+
+
+@web.post("/ui/admin/badges/<badge_id>/award")
+@login_required
+def award_badge_form(badge_id: str) -> Any:
+    try:
+        with services.using_store(_state()):
+            badge_service.award(g.web_user, badge_id, request.form.get("userId", ""))
+    except AppError:
+        flash("Không trao được huy hiệu.", "error")
+    else:
+        flash("Đã trao huy hiệu.", "info")
+    return redirect(url_for("web.admin_badges_page"))

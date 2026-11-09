@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Báo cáo hệ thống | LMS{% endblock %}
+{% block content %}
+  <section class="section-head">
+    <div>
+      <p class="eyebrow">BÁO CÁO</p>
+      <h1>Toàn hệ thống</h1>
+    </div>
+    <a class="button secondary" href="{{ url_for('web.admin_panel') }}">Về quản trị</a>
+  </section>
+  <section class="section grid-2">
+    <article class="card"><h2>Người dùng</h2><p>{{ data.users }}</p>
+      <ul><li>ADMIN: {{ data.byRole.ADMIN }}</li><li>INSTRUCTOR: {{ data.byRole.INSTRUCTOR }}</li><li>STUDENT: {{ data.byRole.STUDENT }}</li></ul>
+    </article>
+    <article class="card"><h2>Khoá học</h2><p>{{ data.courses }} khoá · {{ data.publishedCourses }} đã xuất bản</p><p>{{ data.enrollments }} lượt ghi danh</p></article>
+  </section>
+{% endblock %}

@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Tin nhắn | LMS{% endblock %}
+{% block content %}
+  <section class="section-head">
+    <div><p class="eyebrow">TIN NHẮN</p><h1>Hộp thư</h1></div>
+  </section>
+  <section class="section">
+    <h2>Cuộc trò chuyện</h2>
+    <ul class="list">
+      {% for item in items %}
+        <li>
+          <a href="{{ url_for('web.message_thread_page', user_id=item.userId) }}">{{ item.name or item.email }}</a>
+          <span class="hint">{{ item.lastBody[:60] }}</span>
+          {% if item.unread %}<span class="badge">{{ item.unread }} chưa đọc</span>{% endif %}
+        </li>
+      {% else %}
+        <li>Chưa có cuộc trò chuyện.</li>
+      {% endfor %}
+    </ul>
+    <h2>Nhắn người dùng khác</h2>
+    <form method="get" action="{{ url_for('web.messages_page') }}" class="inline-form">
+      <select onchange="if(this.value) window.location='/ui/messages/'+this.value">
+        <option value="">Chọn người nhận…</option>
+        {% for partner in partners %}
+          <option value="{{ partner.id }}">{{ partner.name }} ({{ partner.role }})</option>
+        {% endfor %}
+      </select>
+    </form>
+  </section>
+{% endblock %}

@@ -15,7 +15,7 @@ bp = Blueprint("quizzes", __name__)
 @require_role("ADMIN", "INSTRUCTOR")
 @store_scope
 def create_quiz(course_id: str) -> Any:
-    title, description, duration, max_attempts, questions = schemas.parse_quiz_body(
+    title, description, duration, max_attempts, questions, allow_answers = schemas.parse_quiz_body(
         request.get_json(silent=True)
     )
     return (
@@ -28,6 +28,7 @@ def create_quiz(course_id: str) -> Any:
                 duration_minutes=duration,
                 max_attempts=max_attempts,
                 questions=questions,
+                allow_answers=allow_answers,
             )
         ),
         201,
@@ -68,6 +69,34 @@ def start_attempt(quiz_id: str) -> Any:
 def submit_attempt(quiz_id: str, attempt_id: str) -> Any:
     answers = schemas.parse_quiz_submit_body(request.get_json(silent=True))
     return jsonify(quiz_service.submit_attempt(g.actor, attempt_id, answers))
+
+
+@bp.patch("/quizzes/<quiz_id>")
+@require_role("ADMIN", "INSTRUCTOR")
+@store_scope
+def update_quiz(quiz_id: str) -> Any:
+    title, description, duration, max_attempts, questions, allow_answers = schemas.parse_quiz_body(
+        request.get_json(silent=True)
+    )
+    return jsonify(
+        quiz_service.update_quiz(
+            g.actor,
+            quiz_id,
+            title=title,
+            description=description,
+            duration_minutes=duration,
+            max_attempts=max_attempts,
+            questions=questions,
+            allow_answers=allow_answers,
+        )
+    )
+
+
+@bp.get("/quiz-attempts/<attempt_id>/answers")
+@require_role("ADMIN", "INSTRUCTOR", "STUDENT")
+@store_scope
+def attempt_answers(attempt_id: str) -> Any:
+    return jsonify(quiz_service.get_attempt_answers(g.actor, attempt_id))
 
 
 @bp.get("/quizzes/<quiz_id>/attempts")

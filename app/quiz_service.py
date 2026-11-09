@@ -3,9 +3,10 @@
 Toàn bộ việc đối chiếu đáp án và tính điểm được thực hiện hoàn toàn ở phía máy chủ.
 """
 
+import datetime
 from typing import Any
 
-from . import audit
+from . import audit, badge_service
 from . import store as store_module
 from .errors import Conflict, Forbidden, NotFound, TimeExpired
 from .runtime import current_store
@@ -57,6 +58,7 @@ def create_quiz(
     duration_minutes: int,
     max_attempts: int,
     questions: list[dict[str, Any]],
+    allow_answers: bool = False,
 ) -> dict[str, Any]:
     state = current_store()
     with state["lock"]:
@@ -70,6 +72,7 @@ def create_quiz(
             max_attempts=max_attempts,
             questions=questions,
             created_by=str(actor.get("id")),
+            allow_answers=allow_answers,
             now=state["now"](),
         )
         audit.record(
@@ -81,6 +84,80 @@ def create_quiz(
             path=state["audit_log_path"],
         )
         return quiz
+
+
+def update_quiz(
+    actor: dict[str, Any],
+    quiz_id: str,
+    *,
+    title: str,
+    description: str,
+    duration_minutes: int,
+    max_attempts: int,
+    questions: list[dict[str, Any]],
+    allow_answers: bool,
+) -> dict[str, Any]:
+    state = current_store()
+    with state["lock"]:
+        quiz = store_module.get_quiz(state, quiz_id)
+        if quiz is None:
+            raise NotFound()
+        authorize_manage(actor, quiz["courseId"])
+        updated = store_module.update_quiz(
+            state,
+            quiz_id,
+            title=title,
+            description=description,
+            duration_minutes=duration_minutes,
+            max_attempts=max_attempts,
+            allow_answers=allow_answers,
+            questions=questions,
+        )
+        if updated is None:
+            raise NotFound()
+        audit.record(
+            actor["id"],
+            "QUIZ_UPDATE",
+            f"/quizzes/{quiz_id}",
+            "OK",
+            quizId=quiz_id,
+            path=state["audit_log_path"],
+        )
+        return updated
+
+
+def get_attempt_answers(actor: dict[str, Any], attempt_id: str) -> dict[str, Any]:
+    """Đáp án của một lượt đã nộp — chỉ khi GV cho phép (hoặc người quản lý khoá)."""
+    state = current_store()
+    with state["lock"]:
+        attempt = store_module.get_quiz_attempt(state, attempt_id)
+        if attempt is None:
+            raise NotFound()
+        quiz = store_module.get_quiz(state, attempt["quizId"], include_answers=True)
+        if quiz is None:
+            raise NotFound()
+        course = _course(state, quiz["courseId"])
+        is_manager = _can_manage(actor, course)
+        if attempt["studentId"] != actor.get("id") and not is_manager:
+            raise Forbidden()
+        if attempt.get("submittedAt") is None:
+            raise Conflict()
+        if not quiz.get("allowAnswers") and not is_manager:
+            raise Forbidden()
+        return {
+            "attemptId": attempt["id"],
+            "score": attempt.get("score"),
+            "answers": [
+                {
+                    "questionId": q["id"],
+                    "question": q["question"],
+                    "options": q["options"],
+                    "correctOption": q["correctOption"],
+                    "selectedOption": (attempt.get("answers") or {}).get(q["id"]),
+                }
+                for q in quiz["questions"]
+            ],
+        }
 
 
 def list_quizzes(actor: dict[str, Any], course_id: str) -> list[dict[str, Any]]:
@@ -185,6 +262,8 @@ def submit_attempt(
             if str(error) == "Time expired":
                 raise TimeExpired() from error
             raise Conflict() from error
+        store_module.record_activity(state, str(actor.get("id")), datetime.date.today().isoformat())
+        badge_service.check_auto(state, str(actor.get("id")))
         audit.record(
             actor["id"],
             "QUIZ_ATTEMPT_SUBMIT",

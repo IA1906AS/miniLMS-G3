@@ -3,6 +3,10 @@
 {% block content %}
   <section class="section">
     <h1>Quản trị hệ thống</h1>
+    <p>
+      <a class="button secondary" href="{{ url_for('web.admin_report_page') }}">Báo cáo hệ thống</a>
+      <a class="button secondary" href="{{ url_for('web.admin_badges_page') }}">Huy hiệu</a>
+    </p>
     <form method="post" action="{{ url_for('web.create_account_form') }}" class="stack">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="form-row">

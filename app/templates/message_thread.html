@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Tin nhắn với {{ other.name if other else "" }} | LMS{% endblock %}
+{% block content %}
+  <section class="section-head">
+    <div><p class="eyebrow">TIN NHẮN</p><h1>{{ other.name if other else "Người dùng" }}</h1></div>
+    <a class="button secondary" href="{{ url_for('web.messages_page') }}">Hộp thư</a>
+  </section>
+  <section class="section">
+    <ul class="list">
+      {% for message in messages %}
+        <li>
+          <strong>{{ message.senderName or message.senderId }}</strong>
+          <span class="hint">{{ message.createdAt|dt }}</span>
+          <p>{{ message.body }}</p>
+        </li>
+      {% else %}
+        <li>Chưa có tin nhắn.</li>
+      {% endfor %}
+    </ul>
+    <form method="post" action="{{ url_for('web.send_message_form', user_id=other.id) }}" class="stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <textarea name="body" rows="3" maxlength="2000" placeholder="Nhập tin nhắn" required></textarea>
+      <button type="submit">Gửi</button>
+    </form>
+  </section>
+{% endblock %}

@@ -59,7 +59,9 @@ def init(database_url: str, clock: Callable[[], float] | None = None) -> dict[st
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
             instructor_id TEXT NOT NULL,
-            published INTEGER NOT NULL DEFAULT 1
+            published INTEGER NOT NULL DEFAULT 1,
+            cert_min_grade REAL,
+            cert_require_lessons INTEGER NOT NULL DEFAULT 1
         );
         CREATE TABLE IF NOT EXISTS lessons (
             id TEXT PRIMARY KEY,
@@ -77,6 +79,56 @@ def init(database_url: str, clock: Callable[[], float] | None = None) -> dict[st
             lesson_id TEXT NOT NULL REFERENCES lessons(id),
             completed_at DOUBLE PRECISION NOT NULL,
             PRIMARY KEY (user_id, lesson_id)
+        );
+        CREATE TABLE IF NOT EXISTS messages (
+            id TEXT PRIMARY KEY,
+            sender_id TEXT NOT NULL REFERENCES users(id),
+            recipient_id TEXT NOT NULL REFERENCES users(id),
+            body TEXT NOT NULL,
+            created_at DOUBLE PRECISION NOT NULL,
+            read_at DOUBLE PRECISION
+        );
+        CREATE TABLE IF NOT EXISTS live_sessions (
+            id TEXT PRIMARY KEY,
+            course_id TEXT NOT NULL REFERENCES courses(id),
+            title TEXT NOT NULL,
+            url TEXT NOT NULL,
+            starts_at DOUBLE PRECISION NOT NULL,
+            created_by TEXT NOT NULL,
+            created_at DOUBLE PRECISION NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS lesson_comments (
+            id TEXT PRIMARY KEY,
+            lesson_id TEXT NOT NULL REFERENCES lessons(id),
+            user_id TEXT NOT NULL REFERENCES users(id),
+            body TEXT NOT NULL,
+            created_at DOUBLE PRECISION NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS certificates (
+            id TEXT PRIMARY KEY,
+            course_id TEXT NOT NULL REFERENCES courses(id),
+            student_id TEXT NOT NULL REFERENCES users(id),
+            code TEXT NOT NULL UNIQUE,
+            issued_by TEXT,
+            issued_at DOUBLE PRECISION NOT NULL,
+            revoked_at DOUBLE PRECISION
+        );
+        CREATE TABLE IF NOT EXISTS badges (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            created_at DOUBLE PRECISION NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS user_badges (
+            user_id TEXT NOT NULL REFERENCES users(id),
+            badge_id TEXT NOT NULL REFERENCES badges(id),
+            awarded_at DOUBLE PRECISION NOT NULL,
+            PRIMARY KEY (user_id, badge_id)
+        );
+        CREATE TABLE IF NOT EXISTS activity_days (
+            user_id TEXT NOT NULL REFERENCES users(id),
+            day TEXT NOT NULL,
+            PRIMARY KEY (user_id, day)
         );
         CREATE TABLE IF NOT EXISTS course_requests (
             id TEXT PRIMARY KEY,
@@ -178,6 +230,7 @@ def init(database_url: str, clock: Callable[[], float] | None = None) -> dict[st
             description TEXT NOT NULL DEFAULT '',
             duration_minutes INTEGER NOT NULL,
             max_attempts INTEGER NOT NULL DEFAULT 1,
+            allow_answers INTEGER NOT NULL DEFAULT 0,
             created_by TEXT NOT NULL,
             created_at DOUBLE PRECISION NOT NULL
         );
@@ -214,6 +267,18 @@ def init(database_url: str, clock: Callable[[], float] | None = None) -> dict[st
     enrollment_columns = {row[1] for row in _table_columns(connection, "enrollments")}
     if "version" not in enrollment_columns:  # DB cũ tạo trước khi có optimistic locking
         connection.execute("ALTER TABLE enrollments ADD COLUMN version INTEGER NOT NULL DEFAULT 0")
+    course_cert_columns = {row[1] for row in _table_columns(connection, "courses")}
+    if "cert_min_grade" not in course_cert_columns:
+        connection.execute("ALTER TABLE courses ADD COLUMN cert_min_grade REAL")
+    if "cert_require_lessons" not in course_cert_columns:
+        connection.execute(
+            "ALTER TABLE courses ADD COLUMN cert_require_lessons INTEGER NOT NULL DEFAULT 1"
+        )
+    quiz_columns = {row[1] for row in _table_columns(connection, "quizzes")}
+    if "allow_answers" not in quiz_columns:  # DB cũ trước khi có xem đáp án
+        connection.execute(
+            "ALTER TABLE quizzes ADD COLUMN allow_answers INTEGER NOT NULL DEFAULT 0"
+        )
     course_columns = {row[1] for row in _table_columns(connection, "courses")}
     if "published" not in course_columns:  # DB cũ tạo trước khi có xuất bản khoá học
         connection.execute("ALTER TABLE courses ADD COLUMN published INTEGER NOT NULL DEFAULT 1")
@@ -286,8 +351,18 @@ def init(database_url: str, clock: Callable[[], float] | None = None) -> dict[st
             user["name"] = row[2]
         users[user["id"]] = user
     courses = {
-        row[0]: {"id": row[0], "name": row[1], "instructorId": row[2], "published": bool(row[3])}
-        for row in connection.execute("SELECT id, name, instructor_id, published FROM courses")
+        row[0]: {
+            "id": row[0],
+            "name": row[1],
+            "instructorId": row[2],
+            "published": bool(row[3]),
+            "certMinGrade": row[4],
+            "certRequireLessons": bool(row[5]),
+        }
+        for row in connection.execute(
+            "SELECT id, name, instructor_id, published, cert_min_grade, cert_require_lessons"
+            " FROM courses"
+        )
     }
     enrollments = {
         (row[0], row[1]): row[2]
@@ -342,9 +417,12 @@ def refresh(state: dict[str, Any]) -> None:
                     "name": row[1],
                     "instructorId": row[2],
                     "published": bool(row[3]),
+                    "certMinGrade": row[4],
+                    "certRequireLessons": bool(row[5]),
                 }
                 for row in connection.execute(
-                    "SELECT id, name, instructor_id, published FROM courses"
+                    "SELECT id, name, instructor_id, published, cert_min_grade,"
+                    " cert_require_lessons FROM courses"
                 )
             }
         )
@@ -1047,7 +1125,14 @@ def delete_course(state: dict[str, Any], course_id: str) -> bool:
                 " (SELECT id FROM lessons WHERE course_id = %s)",
                 (course_id,),
             )
+            connection.execute(
+                "DELETE FROM lesson_comments WHERE lesson_id IN"
+                " (SELECT id FROM lessons WHERE course_id = %s)",
+                (course_id,),
+            )
             connection.execute("DELETE FROM lessons WHERE course_id = %s", (course_id,))
+            connection.execute("DELETE FROM live_sessions WHERE course_id = %s", (course_id,))
+            connection.execute("DELETE FROM certificates WHERE course_id = %s", (course_id,))
             connection.execute("DELETE FROM enrollments WHERE course_id = %s", (course_id,))
             cursor = connection.execute("DELETE FROM courses WHERE id = %s", (course_id,))
             if cursor.rowcount == 0:
@@ -1189,6 +1274,7 @@ def delete_lesson(state: dict[str, Any], lesson_id: str) -> bool:
         connection.execute("BEGIN")
         try:
             connection.execute("DELETE FROM lesson_progress WHERE lesson_id = %s", (lesson_id,))
+            connection.execute("DELETE FROM lesson_comments WHERE lesson_id = %s", (lesson_id,))
             cursor = connection.execute("DELETE FROM lessons WHERE id = %s", (lesson_id,))
             connection.execute("COMMIT")
         except psycopg.Error:
@@ -1264,12 +1350,100 @@ def completed_lesson_ids(state: dict[str, Any], user_id: str, course_id: str) ->
     return {row[0] for row in rows}
 
 
+def course_report(state: dict[str, Any], course_id: str) -> dict[str, Any] | None:
+    """Tổng hợp tiến độ của toàn bộ sinh viên trong một khoá học."""
+    with state["lock"]:
+        if course_id not in state["courses"]:
+            return None
+        connection = state["connection"]
+        lessons_total = connection.execute(
+            "SELECT COUNT(*) FROM lessons WHERE course_id = %s", (course_id,)
+        ).fetchone()[0]
+        assignments_total = connection.execute(
+            "SELECT COUNT(*) FROM assignments WHERE course_id = %s", (course_id,)
+        ).fetchone()[0]
+        quizzes_total = connection.execute(
+            "SELECT COUNT(*) FROM quizzes WHERE course_id = %s", (course_id,)
+        ).fetchone()[0]
+        rows = connection.execute(
+            """
+            SELECT u.id, u.name, u.email
+              FROM enrollments e JOIN users u ON u.id = e.student_id
+             WHERE e.course_id = %s
+             ORDER BY u.email
+            """,
+            (course_id,),
+        ).fetchall()
+        students = []
+        for student_id, name, email in rows:
+            lessons_done = connection.execute(
+                """
+                SELECT COUNT(*) FROM lesson_progress lp
+                  JOIN lessons l ON l.id = lp.lesson_id
+                 WHERE lp.user_id = %s AND l.course_id = %s
+                """,
+                (student_id, course_id),
+            ).fetchone()[0]
+            submitted, graded, avg_grade = connection.execute(
+                """
+                SELECT COUNT(*), COUNT(s.grade), AVG(s.grade)
+                  FROM submissions s JOIN assignments a ON a.id = s.assignment_id
+                 WHERE s.student_id = %s AND a.course_id = %s
+                """,
+                (student_id, course_id),
+            ).fetchone()
+            attempts, best_score, avg_score = connection.execute(
+                """
+                SELECT COUNT(*), MAX(qa.score), AVG(qa.score)
+                  FROM quiz_attempts qa JOIN quizzes q ON q.id = qa.quiz_id
+                 WHERE qa.student_id = %s AND q.course_id = %s
+                   AND qa.submitted_at IS NOT NULL
+                """,
+                (student_id, course_id),
+            ).fetchone()
+            students.append(
+                {
+                    "studentId": student_id,
+                    "name": name,
+                    "email": email,
+                    "lessonsDone": int(lessons_done or 0),
+                    "lessonsTotal": int(lessons_total or 0),
+                    "assignmentsSubmitted": int(submitted or 0),
+                    "assignmentsGraded": int(graded or 0),
+                    "assignmentsTotal": int(assignments_total or 0),
+                    "avgGrade": round(float(avg_grade), 2) if avg_grade is not None else None,
+                    "quizAttempts": int(attempts or 0),
+                    "bestQuizScore": float(best_score) if best_score is not None else None,
+                    "avgQuizScore": round(float(avg_score), 2) if avg_score is not None else None,
+                    "passed": bool(avg_grade is not None and float(avg_grade) >= 5.0),
+                }
+            )
+    passed = len([item for item in students if item["passed"]])
+    return {
+        "courseId": course_id,
+        "lessonsTotal": int(lessons_total or 0),
+        "assignmentsTotal": int(assignments_total or 0),
+        "quizzesTotal": int(quizzes_total or 0),
+        "students": students,
+        "passCount": passed,
+        "failCount": len(students) - passed,
+    }
+
+
 def delete_user(state: dict[str, Any], user_id: str) -> bool:
     with state["lock"]:
         connection = state["connection"]
         connection.execute("BEGIN")
         try:
             connection.execute("DELETE FROM lesson_progress WHERE user_id = %s", (user_id,))
+            connection.execute("DELETE FROM lesson_comments WHERE user_id = %s", (user_id,))
+            connection.execute(
+                "DELETE FROM messages WHERE sender_id = %s OR recipient_id = %s",
+                (user_id, user_id),
+            )
+            connection.execute("DELETE FROM certificates WHERE student_id = %s", (user_id,))
+            connection.execute("DELETE FROM user_badges WHERE user_id = %s", (user_id,))
+            connection.execute("DELETE FROM activity_days WHERE user_id = %s", (user_id,))
             connection.execute("DELETE FROM quiz_attempts WHERE student_id = %s", (user_id,))
             connection.execute("DELETE FROM submissions WHERE student_id = %s", (user_id,))
             connection.execute("DELETE FROM enrollments WHERE student_id = %s", (user_id,))
@@ -2211,6 +2385,7 @@ def _quiz_view(row: tuple[Any, ...]) -> dict[str, Any]:
         "description": row[3],
         "durationMinutes": row[4],
         "maxAttempts": row[5],
+        "allowAnswers": bool(row[8]),
         "createdBy": row[6],
         "createdAt": row[7],
     }
@@ -2227,6 +2402,7 @@ def create_quiz(
     questions: list[dict[str, Any]],
     created_by: str,
     now: float,
+    allow_answers: bool = False,
 ) -> dict[str, Any]:
     quiz_id = "qz_" + uuid.uuid4().hex
     with state["lock"]:
@@ -2237,8 +2413,8 @@ def create_quiz(
                 """
                 INSERT INTO quizzes
                     (id, course_id, title, description, duration_minutes,
-                     max_attempts, created_by, created_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                     max_attempts, allow_answers, created_by, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     quiz_id,
@@ -2247,6 +2423,7 @@ def create_quiz(
                     description,
                     duration_minutes,
                     max_attempts,
+                    int(bool(allow_answers)),
                     created_by,
                     now,
                 ),
@@ -2276,6 +2453,65 @@ def create_quiz(
     return get_quiz(state, quiz_id, include_answers=True) or {}
 
 
+def update_quiz(
+    state: dict[str, Any],
+    quiz_id: str,
+    *,
+    title: str,
+    description: str,
+    duration_minutes: int,
+    max_attempts: int,
+    allow_answers: bool,
+    questions: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    with state["lock"]:
+        connection = state["connection"]
+        connection.execute("BEGIN")
+        try:
+            cursor = connection.execute(
+                """
+                UPDATE quizzes
+                   SET title = %s, description = %s, duration_minutes = %s,
+                       max_attempts = %s, allow_answers = %s
+                 WHERE id = %s
+                """,
+                (
+                    title,
+                    description,
+                    duration_minutes,
+                    max_attempts,
+                    int(bool(allow_answers)),
+                    quiz_id,
+                ),
+            )
+            if cursor.rowcount == 0:
+                connection.execute("ROLLBACK")
+                return None
+            connection.execute("DELETE FROM quiz_questions WHERE quiz_id = %s", (quiz_id,))
+            for position, q in enumerate(questions):
+                connection.execute(
+                    """
+                    INSERT INTO quiz_questions
+                        (id, quiz_id, question_text, options, correct_option, position, points)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        "qq_" + uuid.uuid4().hex,
+                        quiz_id,
+                        q["question"],
+                        json.dumps(q["options"], ensure_ascii=False),
+                        int(q["correctOption"]),
+                        position,
+                        float(q.get("points", 1.0)),
+                    ),
+                )
+            connection.execute("COMMIT")
+        except psycopg.Error:
+            connection.execute("ROLLBACK")
+            raise
+    return get_quiz(state, quiz_id, include_answers=True)
+
+
 def list_quizzes(state: dict[str, Any], course_id: str) -> list[dict[str, Any]]:
     with state["lock"]:
         rows = (
@@ -2283,7 +2519,7 @@ def list_quizzes(state: dict[str, Any], course_id: str) -> list[dict[str, Any]]:
             .execute(
                 """
             SELECT id, course_id, title, description, duration_minutes,
-                   max_attempts, created_by, created_at
+                   max_attempts, created_by, created_at, allow_answers
               FROM quizzes WHERE course_id = %s ORDER BY created_at
             """,
                 (course_id,),
@@ -2302,7 +2538,7 @@ def get_quiz(
             .execute(
                 """
             SELECT id, course_id, title, description, duration_minutes,
-                   max_attempts, created_by, created_at
+                   max_attempts, created_by, created_at, allow_answers
               FROM quizzes WHERE id = %s
             """,
                 (quiz_id,),
@@ -2560,3 +2796,557 @@ def list_quiz_attempts(
             }
             for r in rows
         ]
+
+
+# --- Cộng đồng: tin nhắn, live session, bình luận bài học -----------------
+
+
+def create_message(
+    state: dict[str, Any], *, sender_id: str, recipient_id: str, body: str, now: float
+) -> dict[str, Any]:
+    message = {
+        "id": "msg_" + uuid.uuid4().hex,
+        "senderId": sender_id,
+        "recipientId": recipient_id,
+        "body": body,
+        "createdAt": now,
+        "readAt": None,
+    }
+    with state["lock"]:
+        state["connection"].execute(
+            """
+            INSERT INTO messages (id, sender_id, recipient_id, body, created_at)
+            VALUES (%s, %s, %s, %s, %s)
+            """,
+            (message["id"], sender_id, recipient_id, body, now),
+        )
+    return message
+
+
+def list_messages(state: dict[str, Any], user_id: str, other_id: str) -> list[dict[str, Any]]:
+    with state["lock"]:
+        rows = (
+            state["connection"]
+            .execute(
+                """
+            SELECT id, sender_id, recipient_id, body, created_at, read_at
+              FROM messages
+             WHERE (sender_id = %s AND recipient_id = %s)
+                OR (sender_id = %s AND recipient_id = %s)
+             ORDER BY created_at
+            """,
+                (user_id, other_id, other_id, user_id),
+            )
+            .fetchall()
+        )
+    return [
+        {
+            "id": row[0],
+            "senderId": row[1],
+            "recipientId": row[2],
+            "body": row[3],
+            "createdAt": row[4],
+            "readAt": row[5],
+        }
+        for row in rows
+    ]
+
+
+def list_conversations(state: dict[str, Any], user_id: str) -> list[dict[str, Any]]:
+    with state["lock"]:
+        rows = (
+            state["connection"]
+            .execute(
+                """
+            SELECT id, sender_id, recipient_id, body, created_at, read_at
+              FROM messages
+             WHERE sender_id = %s OR recipient_id = %s
+             ORDER BY created_at DESC
+            """,
+                (user_id, user_id),
+            )
+            .fetchall()
+        )
+    conversations: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        partner = row[2] if row[1] == user_id else row[1]
+        entry = conversations.setdefault(
+            partner,
+            {"userId": partner, "lastBody": row[3], "lastAt": row[4], "unread": 0},
+        )
+        if row[1] == partner and row[2] == user_id and row[5] is None:
+            entry["unread"] += 1
+    return list(conversations.values())
+
+
+def mark_messages_read(state: dict[str, Any], user_id: str, other_id: str, now: float) -> int:
+    with state["lock"]:
+        cursor = state["connection"].execute(
+            """
+            UPDATE messages SET read_at = %s
+             WHERE recipient_id = %s AND sender_id = %s AND read_at IS NULL
+            """,
+            (now, user_id, other_id),
+        )
+        return cursor.rowcount
+
+
+def create_live_session(
+    state: dict[str, Any],
+    *,
+    course_id: str,
+    title: str,
+    url: str,
+    starts_at: float,
+    created_by: str,
+    now: float,
+) -> dict[str, Any]:
+    session = {
+        "id": "live_" + uuid.uuid4().hex,
+        "courseId": course_id,
+        "title": title,
+        "url": url,
+        "startsAt": starts_at,
+        "createdBy": created_by,
+        "createdAt": now,
+    }
+    with state["lock"]:
+        state["connection"].execute(
+            """
+            INSERT INTO live_sessions
+                (id, course_id, title, url, starts_at, created_by, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                session["id"],
+                course_id,
+                title,
+                url,
+                starts_at,
+                created_by,
+                now,
+            ),
+        )
+    return session
+
+
+def list_live_sessions(state: dict[str, Any], course_id: str) -> list[dict[str, Any]]:
+    with state["lock"]:
+        rows = (
+            state["connection"]
+            .execute(
+                """
+            SELECT id, course_id, title, url, starts_at, created_by, created_at
+              FROM live_sessions WHERE course_id = %s ORDER BY starts_at DESC
+            """,
+                (course_id,),
+            )
+            .fetchall()
+        )
+    return [
+        {
+            "id": row[0],
+            "courseId": row[1],
+            "title": row[2],
+            "url": row[3],
+            "startsAt": row[4],
+            "createdBy": row[5],
+            "createdAt": row[6],
+        }
+        for row in rows
+    ]
+
+
+def get_live_session(state: dict[str, Any], session_id: str) -> dict[str, Any] | None:
+    with state["lock"]:
+        row = (
+            state["connection"]
+            .execute(
+                """
+            SELECT id, course_id, title, url, starts_at, created_by, created_at
+              FROM live_sessions WHERE id = %s
+            """,
+                (session_id,),
+            )
+            .fetchone()
+        )
+    if row is None:
+        return None
+    return {
+        "id": row[0],
+        "courseId": row[1],
+        "title": row[2],
+        "url": row[3],
+        "startsAt": row[4],
+        "createdBy": row[5],
+        "createdAt": row[6],
+    }
+
+
+def delete_live_session(state: dict[str, Any], session_id: str) -> bool:
+    with state["lock"]:
+        cursor = state["connection"].execute(
+            "DELETE FROM live_sessions WHERE id = %s", (session_id,)
+        )
+        return cursor.rowcount > 0
+
+
+def create_lesson_comment(
+    state: dict[str, Any], *, lesson_id: str, user_id: str, body: str, now: float
+) -> dict[str, Any]:
+    comment = {
+        "id": "lc_" + uuid.uuid4().hex,
+        "lessonId": lesson_id,
+        "userId": user_id,
+        "body": body,
+        "createdAt": now,
+    }
+    with state["lock"]:
+        state["connection"].execute(
+            """
+            INSERT INTO lesson_comments (id, lesson_id, user_id, body, created_at)
+            VALUES (%s, %s, %s, %s, %s)
+            """,
+            (comment["id"], lesson_id, user_id, body, now),
+        )
+    return comment
+
+
+def list_lesson_comments(state: dict[str, Any], lesson_id: str) -> list[dict[str, Any]]:
+    with state["lock"]:
+        rows = (
+            state["connection"]
+            .execute(
+                """
+            SELECT c.id, c.lesson_id, c.user_id, c.body, c.created_at, u.name
+              FROM lesson_comments c JOIN users u ON u.id = c.user_id
+             WHERE c.lesson_id = %s ORDER BY c.created_at
+            """,
+                (lesson_id,),
+            )
+            .fetchall()
+        )
+    return [
+        {
+            "id": row[0],
+            "lessonId": row[1],
+            "userId": row[2],
+            "body": row[3],
+            "createdAt": row[4],
+            "userName": row[5],
+        }
+        for row in rows
+    ]
+
+
+def get_lesson_comment(state: dict[str, Any], comment_id: str) -> dict[str, Any] | None:
+    with state["lock"]:
+        row = (
+            state["connection"]
+            .execute(
+                "SELECT id, lesson_id, user_id, body, created_at"
+                " FROM lesson_comments WHERE id = %s",
+                (comment_id,),
+            )
+            .fetchone()
+        )
+    if row is None:
+        return None
+    return {
+        "id": row[0],
+        "lessonId": row[1],
+        "userId": row[2],
+        "body": row[3],
+        "createdAt": row[4],
+    }
+
+
+def delete_lesson_comment(state: dict[str, Any], comment_id: str) -> bool:
+    with state["lock"]:
+        cursor = state["connection"].execute(
+            "DELETE FROM lesson_comments WHERE id = %s", (comment_id,)
+        )
+        return cursor.rowcount > 0
+
+
+# --- Chứng chỉ ------------------------------------------------------------
+
+
+def set_course_cert_rule(
+    state: dict[str, Any],
+    course_id: str,
+    *,
+    min_grade: float | None,
+    require_lessons: bool,
+) -> dict[str, Any] | None:
+    with state["lock"]:
+        cursor = state["connection"].execute(
+            "UPDATE courses SET cert_min_grade = %s, cert_require_lessons = %s WHERE id = %s",
+            (min_grade, int(bool(require_lessons)), course_id),
+        )
+        if cursor.rowcount == 0:
+            return None
+        course = state["courses"].get(course_id)
+        if course is not None:
+            course["certMinGrade"] = min_grade
+            course["certRequireLessons"] = bool(require_lessons)
+        return course
+
+
+def _certificate_view(row: tuple[Any, ...]) -> dict[str, Any]:
+    return {
+        "id": row[0],
+        "courseId": row[1],
+        "studentId": row[2],
+        "code": row[3],
+        "issuedBy": row[4],
+        "issuedAt": row[5],
+        "revokedAt": row[6],
+    }
+
+
+def create_certificate(
+    state: dict[str, Any],
+    *,
+    course_id: str,
+    student_id: str,
+    code: str,
+    issued_by: str | None,
+    now: float,
+) -> dict[str, Any]:
+    certificate = {
+        "id": "cert_" + uuid.uuid4().hex,
+        "courseId": course_id,
+        "studentId": student_id,
+        "code": code,
+        "issuedBy": issued_by,
+        "issuedAt": now,
+        "revokedAt": None,
+    }
+    with state["lock"]:
+        state["connection"].execute(
+            """
+            INSERT INTO certificates
+                (id, course_id, student_id, code, issued_by, issued_at)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            """,
+            (
+                certificate["id"],
+                course_id,
+                student_id,
+                code,
+                issued_by,
+                now,
+            ),
+        )
+    return certificate
+
+
+def get_certificate(state: dict[str, Any], certificate_id: str) -> dict[str, Any] | None:
+    with state["lock"]:
+        row = (
+            state["connection"]
+            .execute(
+                """
+            SELECT id, course_id, student_id, code, issued_by, issued_at, revoked_at
+              FROM certificates WHERE id = %s
+            """,
+                (certificate_id,),
+            )
+            .fetchone()
+        )
+    return _certificate_view(row) if row is not None else None
+
+
+def list_certificates(
+    state: dict[str, Any],
+    *,
+    course_id: str | None = None,
+    student_id: str | None = None,
+    active_only: bool = True,
+) -> list[dict[str, Any]]:
+    clauses = []
+    params: list[Any] = []
+    if course_id is not None:
+        clauses.append("course_id = %s")
+        params.append(course_id)
+    if student_id is not None:
+        clauses.append("student_id = %s")
+        params.append(student_id)
+    if active_only:
+        clauses.append("revoked_at IS NULL")
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    with state["lock"]:
+        rows = (
+            state["connection"]
+            .execute(
+                "SELECT id, course_id, student_id, code, issued_by, issued_at, revoked_at"
+                f" FROM certificates{where} ORDER BY issued_at DESC",
+                tuple(params),
+            )
+            .fetchall()
+        )
+    return [_certificate_view(row) for row in rows]
+
+
+def revoke_certificate(state: dict[str, Any], certificate_id: str, now: float) -> bool:
+    with state["lock"]:
+        cursor = state["connection"].execute(
+            "UPDATE certificates SET revoked_at = %s WHERE id = %s AND revoked_at IS NULL",
+            (now, certificate_id),
+        )
+        return cursor.rowcount > 0
+
+
+# --- Huy hiệu và chuỗi ngày hoạt động -------------------------------------
+
+
+def create_badge(
+    state: dict[str, Any], *, name: str, description: str, now: float
+) -> dict[str, Any]:
+    badge = {
+        "id": "badge_" + uuid.uuid4().hex,
+        "name": name,
+        "description": description,
+        "createdAt": now,
+    }
+    with state["lock"]:
+        state["connection"].execute(
+            "INSERT INTO badges (id, name, description, created_at) VALUES (%s, %s, %s, %s)",
+            (badge["id"], name, description, now),
+        )
+    return badge
+
+
+def list_badges(state: dict[str, Any]) -> list[dict[str, Any]]:
+    with state["lock"]:
+        rows = (
+            state["connection"]
+            .execute("SELECT id, name, description, created_at FROM badges ORDER BY created_at")
+            .fetchall()
+        )
+    return [
+        {"id": row[0], "name": row[1], "description": row[2], "createdAt": row[3]} for row in rows
+    ]
+
+
+def get_badge(state: dict[str, Any], badge_id: str) -> dict[str, Any] | None:
+    with state["lock"]:
+        row = (
+            state["connection"]
+            .execute(
+                "SELECT id, name, description, created_at FROM badges WHERE id = %s",
+                (badge_id,),
+            )
+            .fetchone()
+        )
+    if row is None:
+        return None
+    return {"id": row[0], "name": row[1], "description": row[2], "createdAt": row[3]}
+
+
+def find_badge_by_name(state: dict[str, Any], name: str) -> dict[str, Any] | None:
+    with state["lock"]:
+        row = (
+            state["connection"]
+            .execute(
+                "SELECT id, name, description, created_at FROM badges WHERE name = %s",
+                (name,),
+            )
+            .fetchone()
+        )
+    if row is None:
+        return None
+    return {"id": row[0], "name": row[1], "description": row[2], "createdAt": row[3]}
+
+
+def award_badge(state: dict[str, Any], *, user_id: str, badge_id: str, now: float) -> bool:
+    with state["lock"]:
+        cursor = state["connection"].execute(
+            """
+            INSERT INTO user_badges (user_id, badge_id, awarded_at)
+            VALUES (%s, %s, %s) ON CONFLICT DO NOTHING
+            """,
+            (user_id, badge_id, now),
+        )
+        return cursor.rowcount > 0
+
+
+def list_user_badges(state: dict[str, Any], user_id: str) -> list[dict[str, Any]]:
+    with state["lock"]:
+        rows = (
+            state["connection"]
+            .execute(
+                """
+            SELECT b.id, b.name, b.description, ub.awarded_at
+              FROM user_badges ub JOIN badges b ON b.id = ub.badge_id
+             WHERE ub.user_id = %s ORDER BY ub.awarded_at
+            """,
+                (user_id,),
+            )
+            .fetchall()
+        )
+    return [
+        {"id": row[0], "name": row[1], "description": row[2], "awardedAt": row[3]} for row in rows
+    ]
+
+
+def record_activity(state: dict[str, Any], user_id: str, day: str) -> None:
+    with state["lock"]:
+        state["connection"].execute(
+            "INSERT INTO activity_days (user_id, day) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+            (user_id, day),
+        )
+
+
+def list_activity_days(state: dict[str, Any], user_id: str, limit: int = 400) -> list[str]:
+    with state["lock"]:
+        rows = (
+            state["connection"]
+            .execute(
+                "SELECT day FROM activity_days WHERE user_id = %s ORDER BY day DESC LIMIT %s",
+                (user_id, limit),
+            )
+            .fetchall()
+        )
+    return [row[0] for row in rows]
+
+
+def count_completed_lessons(state: dict[str, Any], user_id: str) -> int:
+    with state["lock"]:
+        row = (
+            state["connection"]
+            .execute("SELECT COUNT(*) FROM lesson_progress WHERE user_id = %s", (user_id,))
+            .fetchone()
+        )
+    return int(row[0]) if row else 0
+
+
+def max_quiz_score(state: dict[str, Any], user_id: str) -> float | None:
+    with state["lock"]:
+        row = (
+            state["connection"]
+            .execute(
+                "SELECT MAX(score) FROM quiz_attempts"
+                " WHERE student_id = %s AND submitted_at IS NOT NULL",
+                (user_id,),
+            )
+            .fetchone()
+        )
+    return float(row[0]) if row and row[0] is not None else None
+
+
+def user_has_badge_name(state: dict[str, Any], user_id: str, name: str) -> bool:
+    with state["lock"]:
+        row = (
+            state["connection"]
+            .execute(
+                """
+            SELECT 1 FROM user_badges ub JOIN badges b ON b.id = ub.badge_id
+             WHERE ub.user_id = %s AND b.name = %s
+            """,
+                (user_id, name),
+            )
+            .fetchone()
+        )
+    return row is not None

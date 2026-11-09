@@ -19,6 +19,9 @@
     </div>
     {% if can_manage %}
       <div class="stack-inline">
+        <a class="button secondary" href="{{ url_for('web.course_report_page', course_id=course.id) }}">Báo cáo khoá học</a>
+        <a class="button secondary" href="{{ url_for('web.leaderboard_page', course_id=course.id) }}">Bảng xếp hạng</a>
+        <a class="button secondary" href="{{ url_for('web.course_certificates_page', course_id=course.id) }}">Chứng chỉ</a>
         <form method="post" action="{{ url_for('web.rename_course_form', course_id=course.id) }}" class="inline-form">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input name="name" value="{{ course.name }}" maxlength="200" required>
@@ -94,6 +97,35 @@
         </li>
       {% else %}
         <li>Chưa có bài học.</li>
+      {% endfor %}
+    </ul>
+  </section>
+
+  <section class="section">
+    <h2>Buổi học trực tuyến ({{ live_sessions|length }})</h2>
+    {% if can_manage %}
+      <form method="post" action="{{ url_for('web.create_live_form', course_id=course.id) }}" class="stack">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input name="title" placeholder="Tên buổi học" maxlength="200" required>
+        <input name="url" placeholder="https://..." maxlength="500" required>
+        <input name="startsAt" type="datetime-local" required>
+        <button type="submit">Tạo buổi học</button>
+      </form>
+    {% endif %}
+    <ul class="list">
+      {% for session in live_sessions %}
+        <li>
+          <strong>{{ session.title }}</strong> · {{ session.startsAt|dt }}
+          <a class="button secondary" href="{{ session.url }}" target="_blank" rel="noopener">Tham gia</a>
+          {% if can_manage %}
+            <form method="post" action="{{ url_for('web.delete_live_form', session_id=session.id) }}" class="inline-form">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="link-button">Xoá</button>
+            </form>
+          {% endif %}
+        </li>
+      {% else %}
+        <li>Chưa có buổi học trực tuyến.</li>
       {% endfor %}
     </ul>
   </section>

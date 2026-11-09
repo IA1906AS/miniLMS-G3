@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Bảng xếp hạng | LMS{% endblock %}
+{% block content %}
+  <section class="section-head">
+    <div><p class="eyebrow">XẾP HẠNG</p><h1>{{ course.name }}</h1></div>
+    <a class="button secondary" href="{{ url_for('web.course_detail', course_id=course.id) }}">Về khoá học</a>
+  </section>
+  <section class="section">
+    <table>
+      <thead><tr><th>#</th><th>Sinh viên</th><th>Điểm thành tích</th><th>Bài học</th><th>Điểm TB</th><th>Quiz TB</th></tr></thead>
+      <tbody>
+        {% for row in rows %}
+          <tr>
+            <td>{{ row.rank }}</td>
+            <td>{{ row.name }}</td>
+            <td>{{ row.points }}</td>
+            <td>{{ row.lessonsDone }}</td>
+            <td>{{ row.avgGrade if row.avgGrade is not none else "—" }}</td>
+            <td>{{ row.avgQuizScore if row.avgQuizScore is not none else "—" }}</td>
+          </tr>
+        {% else %}
+          <tr><td colspan="6">Chưa có dữ liệu.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+{% endblock %}

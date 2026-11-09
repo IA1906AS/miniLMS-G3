@@ -14,6 +14,11 @@
         <nav>
           {% if current_user %}
             <a href="{{ url_for('web.courses_list') }}">Khoá học</a>
+            <a href="{{ url_for('web.messages_page') }}">Tin nhắn</a>
+            {% if current_user.role == "STUDENT" %}
+              <a href="{{ url_for('web.my_progress_page') }}">Tiến độ</a>
+              <a href="{{ url_for('web.my_certificates_page') }}">Chứng chỉ</a>
+            {% endif %}
             <a href="{{ url_for('web.account') }}">Tài khoản</a>
             {% if current_user.role == "ADMIN" %}
               <a href="{{ url_for('web.admin_panel') }}">Quản trị</a>
