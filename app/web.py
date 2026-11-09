@@ -29,6 +29,7 @@ from . import (
     auth,
     course_service,
     forum_service,
+    lesson_service,
     material_service,
     oauth,
     passwords,
@@ -547,7 +548,9 @@ def create_course_form() -> Any:
 @login_required
 def course_detail(course_id: str) -> str:
     def load() -> dict[str, Any]:
+        state = _state()
         course = course_service.get_course(g.web_user, course_id)
+        can_manage = _can_manage_course(course, g.web_user)
         return {
             "course": course,
             "members": course_service.list_course_members(g.web_user, course_id),
@@ -556,6 +559,18 @@ def course_detail(course_id: str) -> str:
             "assignments": assignment_service.list_assignments(g.web_user, course_id),
             "quizzes": quiz_service.list_quizzes(g.web_user, course_id),
             "threads": forum_service.list_threads(g.web_user, course_id),
+            "lessons": lesson_service.list_lessons(g.web_user, course_id),
+            "progress": lesson_service.course_progress(g.web_user, course_id),
+            "available_students": (
+                [
+                    user
+                    for user in state["users"].values()
+                    if user["role"] == "STUDENT"
+                    and (course_id, user["id"]) not in state["enrollments"]
+                ]
+                if can_manage
+                else []
+            ),
         }
 
     data = _call(load)
@@ -1030,6 +1045,141 @@ def delete_comment_form(comment_id: str) -> Any:
     return redirect(url_for("web.thread_detail", thread_id=comment["threadId"]))
 
 
+# ---------- Bài học ----------
+
+
+@web.post("/ui/courses/<course_id>/publish")
+@login_required
+def publish_course_form(course_id: str) -> Any:
+    published = request.form.get("published") == "1"
+    try:
+        with services.using_store(_state()):
+            course_service.set_course_published(g.web_user, course_id, published)
+    except (ValidationError, AppError):
+        flash("Không đổi được trạng thái xuất bản.", "error")
+    else:
+        flash("Đã xuất bản khoá học." if published else "Đã ẩn khoá học.", "info")
+    return redirect(url_for("web.course_detail", course_id=course_id))
+
+
+@web.post("/ui/courses/<course_id>/lessons")
+@login_required
+def create_lesson_form(course_id: str) -> Any:
+    try:
+        with services.using_store(_state()):
+            lesson_service.create_lesson(
+                g.web_user,
+                course_id,
+                request.form.get("title", ""),
+                request.form.get("body", ""),
+                request.form.get("videoUrl", ""),
+                request.form.get("isPreview") == "on",
+            )
+    except (ValidationError, AppError):
+        flash("Không tạo được bài học.", "error")
+    else:
+        flash("Đã thêm bài học.", "info")
+    return redirect(url_for("web.course_detail", course_id=course_id))
+
+
+@web.get("/ui/lessons/<lesson_id>")
+@login_required
+def lesson_detail(lesson_id: str) -> str:
+    lesson = _call(lambda: lesson_service.get_lesson(g.web_user, lesson_id))
+    course = _state()["courses"].get(lesson["courseId"]) or {}
+    completed = False
+    progress = None
+    if g.web_user["role"] == "STUDENT":
+        progress = _call(lambda: lesson_service.course_progress(g.web_user, lesson["courseId"]))
+        completed = lesson["id"] in progress["completedIds"]
+    return render_template(
+        "lesson.html",
+        lesson=lesson,
+        course=course,
+        can_manage=_can_manage_course(course, g.web_user),
+        completed=completed,
+        progress=progress,
+        user=g.web_user,
+    )
+
+
+@web.post("/ui/lessons/<lesson_id>/update")
+@login_required
+def update_lesson_form(lesson_id: str) -> Any:
+    try:
+        with services.using_store(_state()):
+            lesson_service.update_lesson(
+                g.web_user,
+                lesson_id,
+                request.form.get("title", ""),
+                request.form.get("body", ""),
+                request.form.get("videoUrl", ""),
+                request.form.get("isPreview") == "on",
+            )
+    except (ValidationError, AppError):
+        flash("Không cập nhật được bài học.", "error")
+    else:
+        flash("Đã cập nhật bài học.", "info")
+    return redirect(url_for("web.lesson_detail", lesson_id=lesson_id))
+
+
+@web.post("/ui/lessons/<lesson_id>/delete")
+@login_required
+def delete_lesson_form(lesson_id: str) -> Any:
+    lesson = _call(lambda: lesson_service.get_lesson(g.web_user, lesson_id))
+    try:
+        with services.using_store(_state()):
+            lesson_service.delete_lesson(g.web_user, lesson_id)
+    except AppError:
+        flash("Không xoá được bài học.", "error")
+    else:
+        flash("Đã xoá bài học.", "info")
+    return redirect(url_for("web.course_detail", course_id=lesson["courseId"]))
+
+
+@web.post("/ui/lessons/<lesson_id>/complete")
+@login_required
+def complete_lesson_form(lesson_id: str) -> Any:
+    try:
+        with services.using_store(_state()):
+            lesson_service.complete_lesson(g.web_user, lesson_id)
+    except AppError:
+        flash("Không đánh dấu được hoàn thành.", "error")
+    else:
+        flash("Đã đánh dấu hoàn thành bài học.", "info")
+    return redirect(url_for("web.lesson_detail", lesson_id=lesson_id))
+
+
+# ---------- Học viên trong khoá ----------
+
+
+@web.post("/ui/courses/<course_id>/students")
+@login_required
+def add_student_form(course_id: str) -> Any:
+    student_id = request.form.get("studentId", "").strip()
+    try:
+        with services.using_store(_state()):
+            course_service.enroll_student(g.web_user, course_id, student_id)
+    except (ValidationError, AppError):
+        flash("Không thêm được sinh viên.", "error")
+    else:
+        flash("Đã thêm sinh viên vào khoá.", "info")
+    return redirect(url_for("web.course_detail", course_id=course_id))
+
+
+@web.post("/ui/courses/<course_id>/students/<student_id>/remove")
+@login_required
+def remove_student_form(course_id: str, student_id: str) -> Any:
+    try:
+        with services.using_store(_state()):
+            course_service.unenroll_student(g.web_user, course_id, student_id)
+    except AppError:
+        flash("Không xoá được sinh viên.", "error")
+    else:
+        flash("Đã xoá sinh viên khỏi khoá.", "info")
+    return redirect(url_for("web.course_detail", course_id=course_id))
+
+
 # ---------- Quản trị ----------
 
 
@@ -1072,4 +1222,36 @@ def lock_user_form(user_id: str) -> Any:
 def unlock_user_form(user_id: str) -> Any:
     _call(lambda: admin_service.set_locked(g.web_user, user_id, False))
     flash("Đã mở khoá tài khoản.", "info")
+    return redirect(url_for("web.admin_panel"))
+
+
+@web.post("/ui/admin/users")
+@login_required
+def create_account_form() -> Any:
+    try:
+        with services.using_store(_state()):
+            admin_service.create_account(
+                g.web_user,
+                request.form.get("email", ""),
+                request.form.get("name", ""),
+                request.form.get("password", ""),
+                request.form.get("role", "STUDENT"),
+            )
+    except (ValidationError, AppError):
+        flash("Không tạo được tài khoản (kiểm tra email/mật khẩu/vai trò).", "error")
+    else:
+        flash("Đã tạo tài khoản.", "info")
+    return redirect(url_for("web.admin_panel"))
+
+
+@web.post("/ui/admin/users/<user_id>/delete")
+@login_required
+def delete_account_form(user_id: str) -> Any:
+    try:
+        with services.using_store(_state()):
+            admin_service.delete_account(g.web_user, user_id)
+    except AppError:
+        flash("Không xoá được tài khoản (còn khoá học hoặc là admin cuối).", "error")
+    else:
+        flash("Đã xoá tài khoản.", "info")
     return redirect(url_for("web.admin_panel"))

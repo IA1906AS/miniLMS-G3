@@ -6,7 +6,9 @@ Không import Flask.
 import json
 from typing import Any
 
-from . import audit, auth
+import bcrypt
+
+from . import audit, auth, schemas
 from . import store as store_module
 from .errors import Conflict, Forbidden, NotFound, ValidationError
 from .runtime import current_store
@@ -114,3 +116,58 @@ def read_audit(actor: dict[str, Any], limit: int) -> list[dict[str, Any]]:
         except json.JSONDecodeError:
             continue
     return entries
+
+
+def create_account(
+    actor: dict[str, Any], email: str, name: str, password: str, role: str
+) -> dict[str, Any]:
+    """ADMIN tạo tài khoản thủ công với vai trò chỉ định."""
+    state = current_store()
+    _require_admin(actor)
+    email, name, password, role = schemas.parse_admin_user_body(
+        {"email": email, "name": name, "password": password, "role": role}
+    )
+    password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt(rounds=10))
+    try:
+        user = store_module.create_user(
+            state, email=email, name=name, password_hash=password_hash, role=role
+        )
+    except ValueError as error:
+        raise Conflict() from error
+    audit.record(
+        actor["id"],
+        "USER_CREATE",
+        "/admin/users",
+        "OK",
+        userId=user["id"],
+        role=role,
+        path=state["audit_log_path"],
+    )
+    return _user_view(state, user)
+
+
+def delete_account(actor: dict[str, Any], user_id: str) -> dict[str, Any]:
+    """ADMIN xoá tài khoản không còn dữ liệu ràng buộc."""
+    state = current_store()
+    with state["lock"]:
+        _require_admin(actor)
+        target = state["users"].get(user_id)
+        if target is None:
+            raise NotFound()
+        if user_id == actor.get("id"):
+            raise ValidationError()
+        if target["role"] == "ADMIN" and store_module.count_users_with_role(state, "ADMIN") <= 1:
+            raise ValidationError()
+        if any(course["instructorId"] == user_id for course in state["courses"].values()):
+            raise Conflict()
+        if not store_module.delete_user(state, user_id):
+            raise NotFound()
+        audit.record(
+            actor["id"],
+            "USER_DELETE",
+            f"/admin/users/{user_id}",
+            "OK",
+            userId=user_id,
+            path=state["audit_log_path"],
+        )
+        return {"id": user_id, "deleted": True}

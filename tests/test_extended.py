@@ -66,16 +66,17 @@ def test_course_list_is_scoped_by_role(client):
         "c2",
     }
     instructor = get(client, login(client, "an.gv@lms.test"), "/courses").get_json()
-    assert [c["id"] for c in instructor] == ["c1"]
+    assert {c["id"] for c in instructor} == {"c1", "c2"}  # khoá đã xuất bản
     student = get(client, login(client, "chi.sv@lms.test"), "/courses").get_json()
-    assert [c["id"] for c in student] == ["c1"]
+    # sinh viên thấy khoá đã ghi danh + khoá đã xuất bản
+    assert {c["id"] for c in student} == {"c1", "c2"}
     other_student = get(client, login(client, "em.sv@lms.test"), "/courses").get_json()
-    assert [c["id"] for c in other_student] == ["c2"]
+    assert {c["id"] for c in other_student} == {"c1", "c2"}
 
 
 def test_course_list_items_have_only_contract_fields(client):
     course = get(client, login(client, "em.sv@lms.test"), "/courses").get_json()[0]
-    assert set(course) == {"id", "name", "instructorId"}
+    assert set(course) == {"id", "name", "instructorId", "published"}
 
 
 # --- GET /courses/<id> ----------------------------------------------------

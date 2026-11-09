@@ -40,6 +40,21 @@ def admin_unlock_user(user_id: str) -> Any:
     return jsonify(admin_service.set_locked(g.actor, user_id, False))
 
 
+@bp.post("/admin/users")
+@require_role("ADMIN")
+@store_scope
+def create_account() -> Any:
+    email, name, password, role = schemas.parse_admin_user_body(request.get_json(silent=True))
+    return jsonify(admin_service.create_account(g.actor, email, name, password, role)), 201
+
+
+@bp.delete("/admin/users/<user_id>")
+@require_role("ADMIN")
+@store_scope
+def delete_account(user_id: str) -> Any:
+    return jsonify(admin_service.delete_account(g.actor, user_id))
+
+
 @bp.get("/admin/audit")
 @require_role("ADMIN")
 @store_scope

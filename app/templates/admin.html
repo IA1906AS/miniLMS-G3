@@ -3,8 +3,22 @@
 {% block content %}
   <section class="section">
     <h1>Quản trị hệ thống</h1>
+    <form method="post" action="{{ url_for('web.create_account_form') }}" class="stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="form-row">
+        <input name="email" type="email" placeholder="Email" required>
+        <input name="name" placeholder="Họ tên" required>
+        <input name="password" type="password" placeholder="Mật khẩu (≥10, hoa/thường/số)" minlength="10" required>
+        <select name="role">
+          <option value="STUDENT">STUDENT</option>
+          <option value="INSTRUCTOR">INSTRUCTOR</option>
+          <option value="ADMIN">ADMIN</option>
+        </select>
+        <button type="submit">Tạo tài khoản</button>
+      </div>
+    </form>
     <table>
-      <thead><tr><th>Email</th><th>Họ tên</th><th>Vai trò</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
+      <thead><tr><th>Email</th><th>Họ tên</th><th>Vai trò</th><th>Trạng thái</th><th>Thao tác</th><th>Xoá</th></tr></thead>
       <tbody>
         {% for account in users %}
           <tr>
@@ -34,6 +48,12 @@
                   <button type="submit" class="danger">Khoá</button>
                 </form>
               {% endif %}
+            </td>
+            <td>
+              <form method="post" action="{{ url_for('web.delete_account_form', user_id=account.id) }}" class="inline-form">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="link-button">Xoá</button>
+              </form>
             </td>
           </tr>
         {% endfor %}

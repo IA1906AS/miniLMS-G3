@@ -28,6 +28,7 @@ def _course_view(course: dict[str, Any]) -> dict[str, Any]:
         "id": course["id"],
         "name": course["name"],
         "instructorId": course["instructorId"],
+        "published": bool(course.get("published", True)),
     }
 
 
@@ -43,12 +44,17 @@ def list_courses(
         if role == "ADMIN":
             visible = courses
         elif role == "INSTRUCTOR":
-            visible = [course for course in courses if course["instructorId"] == actor.get("id")]
+            visible = [
+                course
+                for course in courses
+                if course["instructorId"] == actor.get("id") or bool(course.get("published", True))
+            ]
         elif role == "STUDENT":
             visible = [
                 course
                 for course in courses
                 if (course["id"], actor.get("id")) in state["enrollments"]
+                or bool(course.get("published", True))
             ]
         else:
             raise Forbidden()
@@ -121,8 +127,7 @@ def update_course(actor: dict[str, Any], course_id: str, name: str) -> dict[str,
 def delete_course(actor: dict[str, Any], course_id: str) -> dict[str, Any]:
     state = current_store()
     with state["lock"]:
-        if _role(actor) != "ADMIN":
-            raise Forbidden()
+        authorize_manage(actor, course_id)
         if course_id not in state["courses"]:
             raise NotFound()
         if not store_module.delete_course(state, course_id):
@@ -315,3 +320,23 @@ def my_grades(actor: dict[str, Any]) -> list[dict[str, Any]]:
             for (course_id, enrolled_id), score in state["enrollments"].items()
             if enrolled_id == student_id and course_id in state["courses"]
         ]
+
+
+def set_course_published(actor: dict[str, Any], course_id: str, published: bool) -> dict[str, Any]:
+    """Xuất bản hoặc ẩn khoá học (ADMIN hoặc giảng viên phụ trách)."""
+    state = current_store()
+    with state["lock"]:
+        authorize_manage(actor, course_id)
+        course = store_module.set_course_published(state, course_id, bool(published))
+        if course is None:
+            raise NotFound()
+        audit.record(
+            actor["id"],
+            "COURSE_PUBLISH",
+            f"/courses/{course_id}/publish",
+            "OK",
+            courseId=course_id,
+            published=bool(published),
+            path=state["audit_log_path"],
+        )
+        return _course_view(course)

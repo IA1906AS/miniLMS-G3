@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}{{ lesson.title }} | LMS{% endblock %}
+{% block content %}
+  <section class="section-head">
+    <div>
+      <p class="eyebrow">BÀI HỌC</p>
+      <h1>{{ lesson.title }}</h1>
+      <p>{{ course.name }} · Bài {{ lesson.position }}</p>
+    </div>
+    <a class="button secondary" href="{{ url_for('web.course_detail', course_id=lesson.courseId) }}">Về khoá học</a>
+  </section>
+
+  {% if progress %}
+    <p class="hint">Tiến độ khoá: {{ progress.completedLessons }}/{{ progress.totalLessons }} bài ({{ progress.percent }}%)</p>
+  {% endif %}
+
+  <section class="section">
+    <article class="card">
+      {% if lesson.videoUrl %}
+        <p><a href="{{ lesson.videoUrl }}" target="_blank" rel="noopener">Xem video bài giảng</a></p>
+      {% endif %}
+      <div style="white-space: pre-wrap">{{ lesson.body }}</div>
+    </article>
+  </section>
+
+  {% if user.role == "STUDENT" %}
+    <section class="section">
+      {% if completed %}
+        <p class="notice">Bạn đã hoàn thành bài học này.</p>
+      {% else %}
+        <form method="post" action="{{ url_for('web.complete_lesson_form', lesson_id=lesson.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit">Đánh dấu hoàn thành</button>
+        </form>
+      {% endif %}
+    </section>
+  {% endif %}
+
+  {% if can_manage %}
+    <section class="section">
+      <h2>Sửa bài học</h2>
+      <form method="post" action="{{ url_for('web.update_lesson_form', lesson_id=lesson.id) }}" class="stack">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input name="title" value="{{ lesson.title }}" maxlength="200" required>
+        <textarea name="body" rows="5" maxlength="20000">{{ lesson.body }}</textarea>
+        <input name="videoUrl" value="{{ lesson.videoUrl }}" maxlength="500" placeholder="Link video">
+        <label class="choice"><input type="checkbox" name="isPreview" {% if lesson.isPreview %}checked{% endif %}> Cho phép xem trước</label>
+        <button type="submit">Lưu thay đổi</button>
+      </form>
+      <form method="post" action="{{ url_for('web.delete_lesson_form', lesson_id=lesson.id) }}" class="inline-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="danger">Xoá bài học</button>
+      </form>
+    </section>
+  {% endif %}
+{% endblock %}

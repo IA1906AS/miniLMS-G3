@@ -6,6 +6,16 @@
       <p class="eyebrow">KHOÁ HỌC</p>
       <h1>{{ course.name }}</h1>
       <p>Mã: {{ course.id }} · Giảng viên: {{ course.instructorId }}</p>
+      <p>
+        <span class="badge">{{ "Đã xuất bản" if course.published else "Bản nháp" }}</span>
+        {% if can_manage %}
+          <form method="post" action="{{ url_for('web.publish_course_form', course_id=course.id) }}" class="inline-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="published" value="{{ 0 if course.published else 1 }}">
+            <button type="submit">{{ "Ẩn khoá học" if course.published else "Xuất bản khoá học" }}</button>
+          </form>
+        {% endif %}
+      </p>
     </div>
     {% if can_manage %}
       <div class="stack-inline">
@@ -14,7 +24,7 @@
           <input name="name" value="{{ course.name }}" maxlength="200" required>
           <button type="submit">Đổi tên</button>
         </form>
-        {% if user.role == "ADMIN" %}
+        {% if can_manage %}
           <form method="post" action="{{ url_for('web.delete_course_form', course_id=course.id) }}" class="inline-form">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="danger">Xoá khoá học</button>
@@ -26,8 +36,19 @@
 
   <section class="section">
     <h2>Thành viên ({{ members|length }})</h2>
+    {% if can_manage and available_students %}
+      <form method="post" action="{{ url_for('web.add_student_form', course_id=course.id) }}" class="inline-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <select name="studentId" required>
+          {% for student in available_students %}
+            <option value="{{ student.id }}">{{ student.email }}</option>
+          {% endfor %}
+        </select>
+        <button type="submit">Thêm sinh viên</button>
+      </form>
+    {% endif %}
     <table>
-      <thead><tr><th>Họ tên</th><th>Email</th><th>Vai trò</th><th>Giới thiệu</th><th>Điện thoại</th></tr></thead>
+      <thead><tr><th>Họ tên</th><th>Email</th><th>Vai trò</th><th>Giới thiệu</th><th>Điện thoại</th>{% if can_manage %}<th>Thao tác</th>{% endif %}</tr></thead>
       <tbody>
         {% for member in members %}
           <tr>
@@ -36,10 +57,45 @@
             <td><span class="role">{{ member.role }}</span></td>
             <td>{{ member.bio or "—" }}</td>
             <td>{{ member.phone or "—" }}</td>
+            {% if can_manage %}
+              <td>
+                {% if member.role == "STUDENT" %}
+                  <form method="post" action="{{ url_for('web.remove_student_form', course_id=course.id, student_id=member.id) }}" class="inline-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="link-button">Xoá khỏi khoá</button>
+                  </form>
+                {% else %}—{% endif %}
+              </td>
+            {% endif %}
           </tr>
         {% endfor %}
       </tbody>
     </table>
+  </section>
+
+  <section class="section">
+    <h2>Bài học ({{ lessons|length }}) · {{ progress.percent }}% hoàn thành</h2>
+    {% if can_manage %}
+      <form method="post" action="{{ url_for('web.create_lesson_form', course_id=course.id) }}" class="stack">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input name="title" placeholder="Tên bài học" maxlength="200" required>
+        <textarea name="body" rows="3" maxlength="20000" placeholder="Nội dung bài học"></textarea>
+        <input name="videoUrl" placeholder="Link video (tuỳ chọn)" maxlength="500">
+        <label class="choice"><input type="checkbox" name="isPreview"> Cho phép xem trước</label>
+        <button type="submit">Thêm bài học</button>
+      </form>
+    {% endif %}
+    <ul class="list">
+      {% for lesson in lessons %}
+        <li>
+          <a href="{{ url_for('web.lesson_detail', lesson_id=lesson.id) }}">{{ loop.index }}. {{ lesson.title }}</a>
+          {% if lesson.id in progress.completedIds %}<span class="badge">Đã học</span>{% endif %}
+          {% if lesson.isPreview %}<span class="role">Xem trước</span>{% endif %}
+        </li>
+      {% else %}
+        <li>Chưa có bài học.</li>
+      {% endfor %}
+    </ul>
   </section>
 
   <section class="section grid-2">

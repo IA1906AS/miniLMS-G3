@@ -29,10 +29,18 @@ def update_course(course_id: str) -> Any:
 
 
 @bp.delete("/courses/<course_id>")
-@require_role("ADMIN")
+@require_role("ADMIN", "INSTRUCTOR")
 @store_scope
 def delete_course(course_id: str) -> Any:
     return jsonify(course_service.delete_course(g.actor, course_id))
+
+
+@bp.patch("/courses/<course_id>/publish")
+@require_role("ADMIN", "INSTRUCTOR")
+@store_scope
+def publish_course(course_id: str) -> Any:
+    published = schemas.parse_publish_body(request.get_json(silent=True))
+    return jsonify(course_service.set_course_published(g.actor, course_id, published))
 
 
 @bp.get("/courses/<course_id>/members")

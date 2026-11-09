@@ -100,6 +100,12 @@ Dữ liệu mẫu lấy từ `app/seed.json` (6 tài khoản, 2 khóa học). Tr
 | `POST /auth/login`, `/auth/register`, `/auth/forgot-password`, `/auth/reset-password` | API JSON |
 | `GET /me` | thông tin actor từ JWT |
 | `GET /courses/<id>/grades`, `PUT /courses/<id>/grades/<student_id>` | xem/sửa điểm |
+| `PATCH /courses/<id>/publish` | xuất bản/ẩn khoá học (ADMIN, GV phụ trách) |
+| `GET|POST /courses/<id>/lessons` | danh sách / thêm bài học |
+| `GET|PATCH|DELETE /lessons/<id>` | xem / sửa / xoá bài học |
+| `POST /lessons/<id>/complete` | sinh viên đánh dấu hoàn thành bài |
+| `GET /courses/<id>/progress` | tiến độ học của chính mình |
+| `POST /admin/users`, `DELETE /admin/users/<id>` | ADMIN tạo / xoá tài khoản |
 | `GET /courses`, `GET /courses/<id>` | danh sách/chi tiết môn theo quyền (GĐ3) |
 | `POST /courses` | ADMIN tạo môn, id `c_<uuid4>` |
 | `POST /course-requests`, `GET /course-requests` | GV gửi yêu cầu mở môn (ADMIN duyệt) |
@@ -199,6 +205,10 @@ Ngoài REST API, các trang HTML phục vụ đặc tả tính năng nằm dư�
 |---|---|---|
 | Danh sách + tìm kiếm khoá học | `/ui/courses` | Tất cả |
 | Chi tiết khoá học (thành viên, tài liệu, thông báo, bài tập, quiz, diễn đàn) | `/ui/courses/<id>` | Thành viên khoá học |
+| Bài học (danh sách, thêm/sửa/xoá, đánh dấu hoàn thành, tiến độ %) | `/ui/courses/<id>`, `/ui/lessons/<id>` | Thành viên; GV/ADMIN quản lý |
+| Xuất bản / ẩn khoá học | nút trên `/ui/courses/<id>` | ADMIN, GV phụ trách |
+| Thêm / xoá sinh viên trong khoá | `/ui/courses/<id>` | ADMIN, GV phụ trách |
+| Tạo / xoá tài khoản (chọn vai trò) | `/ui/admin` | ADMIN |
 | Hồ sơ, ảnh đại diện, đổi mật khẩu | `/account` | Tất cả |
 | Bài tập + nộp bài + chấm điểm | `/ui/assignments/<id>` | SV/GV |
 | Quiz + làm bài | `/ui/quizzes/<id>` | SV/GV |

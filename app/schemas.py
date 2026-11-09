@@ -400,3 +400,44 @@ def parse_grade_v2_body(body: Any) -> tuple[int | float, int]:
     if isinstance(expected, bool) or not isinstance(expected, int) or expected < 0:
         raise ValidationError()
     return validate_score(body["score"]), expected
+
+
+LESSON_FIELDS = frozenset({"title", "body", "videoUrl", "isPreview"})
+
+
+def parse_lesson_body(body: Any) -> tuple[str, str, str, bool]:
+    if not isinstance(body, dict) or "title" not in body or not set(body) <= LESSON_FIELDS:
+        raise ValidationError()
+    title = body["title"]
+    content = body.get("body", "")
+    video_url = body.get("videoUrl", "")
+    preview = body.get("isPreview", False)
+    if not isinstance(title, str) or not title.strip() or len(title) > 200:
+        raise ValidationError()
+    if not isinstance(content, str) or len(content) > 20000:
+        raise ValidationError()
+    if not isinstance(video_url, str) or len(video_url) > 500:
+        raise ValidationError()
+    if not isinstance(preview, bool):
+        raise ValidationError()
+    return title.strip(), content, video_url, preview
+
+
+def parse_publish_body(body: Any) -> bool:
+    if not isinstance(body, dict) or set(body) != {"published"}:
+        raise ValidationError()
+    if not isinstance(body["published"], bool):
+        raise ValidationError()
+    return body["published"]
+
+
+def parse_admin_user_body(body: Any) -> tuple[str, str, str, str]:
+    if not isinstance(body, dict) or set(body) != {"email", "name", "password", "role"}:
+        raise ValidationError()
+    role = body["role"]
+    if role not in ("ADMIN", "INSTRUCTOR", "STUDENT"):
+        raise ValidationError()
+    email, name, password = parse_register_body(
+        {"email": body["email"], "name": body["name"], "password": body["password"]}
+    )
+    return email, name, password, role

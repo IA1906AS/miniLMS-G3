@@ -58,7 +58,25 @@ def init(database_url: str, clock: Callable[[], float] | None = None) -> dict[st
         CREATE TABLE IF NOT EXISTS courses (
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
-            instructor_id TEXT NOT NULL
+            instructor_id TEXT NOT NULL,
+            published INTEGER NOT NULL DEFAULT 1
+        );
+        CREATE TABLE IF NOT EXISTS lessons (
+            id TEXT PRIMARY KEY,
+            course_id TEXT NOT NULL REFERENCES courses(id),
+            title TEXT NOT NULL,
+            body TEXT NOT NULL DEFAULT '',
+            video_url TEXT NOT NULL DEFAULT '',
+            position INTEGER NOT NULL DEFAULT 0,
+            is_preview INTEGER NOT NULL DEFAULT 0,
+            created_by TEXT NOT NULL,
+            created_at DOUBLE PRECISION NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS lesson_progress (
+            user_id TEXT NOT NULL REFERENCES users(id),
+            lesson_id TEXT NOT NULL REFERENCES lessons(id),
+            completed_at DOUBLE PRECISION NOT NULL,
+            PRIMARY KEY (user_id, lesson_id)
         );
         CREATE TABLE IF NOT EXISTS course_requests (
             id TEXT PRIMARY KEY,
@@ -196,6 +214,9 @@ def init(database_url: str, clock: Callable[[], float] | None = None) -> dict[st
     enrollment_columns = {row[1] for row in _table_columns(connection, "enrollments")}
     if "version" not in enrollment_columns:  # DB cũ tạo trước khi có optimistic locking
         connection.execute("ALTER TABLE enrollments ADD COLUMN version INTEGER NOT NULL DEFAULT 0")
+    course_columns = {row[1] for row in _table_columns(connection, "courses")}
+    if "published" not in course_columns:  # DB cũ tạo trước khi có xuất bản khoá học
+        connection.execute("ALTER TABLE courses ADD COLUMN published INTEGER NOT NULL DEFAULT 1")
     sub_cols = {row[1] for row in _table_columns(connection, "submissions")}
     if "file_name" not in sub_cols:
         connection.execute("ALTER TABLE submissions ADD COLUMN file_name TEXT NOT NULL DEFAULT ''")
@@ -265,8 +286,8 @@ def init(database_url: str, clock: Callable[[], float] | None = None) -> dict[st
             user["name"] = row[2]
         users[user["id"]] = user
     courses = {
-        row[0]: {"id": row[0], "name": row[1], "instructorId": row[2]}
-        for row in connection.execute("SELECT id, name, instructor_id FROM courses")
+        row[0]: {"id": row[0], "name": row[1], "instructorId": row[2], "published": bool(row[3])}
+        for row in connection.execute("SELECT id, name, instructor_id, published FROM courses")
     }
     enrollments = {
         (row[0], row[1]): row[2]
@@ -316,8 +337,15 @@ def refresh(state: dict[str, Any]) -> None:
         state["courses"].clear()
         state["courses"].update(
             {
-                row[0]: {"id": row[0], "name": row[1], "instructorId": row[2]}
-                for row in connection.execute("SELECT id, name, instructor_id FROM courses")
+                row[0]: {
+                    "id": row[0],
+                    "name": row[1],
+                    "instructorId": row[2],
+                    "published": bool(row[3]),
+                }
+                for row in connection.execute(
+                    "SELECT id, name, instructor_id, published FROM courses"
+                )
             }
         )
         state["enrollments"].clear()
@@ -357,12 +385,13 @@ def create_user(
     email: str,
     name: str,
     password_hash: bytes,
+    role: str = "STUDENT",
 ) -> dict[str, Any]:
     user = {
         "id": "u_" + secrets.token_urlsafe(12),
         "email": email,
         "name": name,
-        "role": "STUDENT",
+        "role": role,
         "pw_hash": password_hash,
     }
     with state["lock"]:
@@ -950,15 +979,22 @@ def set_user_locked(state: dict[str, Any], user_id: str, locked: bool) -> None:
         state["locked"][user_id] = locked
 
 
-def create_course(state: dict[str, Any], *, name: str, instructor_id: str) -> dict[str, Any]:
-    course = {"id": "c_" + uuid.uuid4().hex, "name": name, "instructorId": instructor_id}
+def create_course(
+    state: dict[str, Any], *, name: str, instructor_id: str, published: bool = True
+) -> dict[str, Any]:
+    course = {
+        "id": "c_" + uuid.uuid4().hex,
+        "name": name,
+        "instructorId": instructor_id,
+        "published": bool(published),
+    }
     with state["lock"]:
         connection = state["connection"]
         connection.execute("BEGIN")
         try:
             connection.execute(
-                "INSERT INTO courses (id, name, instructor_id) VALUES (%s, %s, %s)",
-                (course["id"], course["name"], course["instructorId"]),
+                "INSERT INTO courses (id, name, instructor_id, published) VALUES (%s, %s, %s, %s)",
+                (course["id"], course["name"], course["instructorId"], int(bool(published))),
             )
             connection.execute("COMMIT")
         except psycopg.Error:
@@ -1006,6 +1042,12 @@ def delete_course(state: dict[str, Any], course_id: str) -> bool:
             )
             connection.execute("DELETE FROM assignments WHERE course_id = %s", (course_id,))
             connection.execute("DELETE FROM announcements WHERE course_id = %s", (course_id,))
+            connection.execute(
+                "DELETE FROM lesson_progress WHERE lesson_id IN"
+                " (SELECT id FROM lessons WHERE course_id = %s)",
+                (course_id,),
+            )
+            connection.execute("DELETE FROM lessons WHERE course_id = %s", (course_id,))
             connection.execute("DELETE FROM enrollments WHERE course_id = %s", (course_id,))
             cursor = connection.execute("DELETE FROM courses WHERE id = %s", (course_id,))
             if cursor.rowcount == 0:
@@ -1019,6 +1061,237 @@ def delete_course(state: dict[str, Any], course_id: str) -> bool:
         to_delete = [key for key in state["enrollments"] if key[0] == course_id]
         for key in to_delete:
             state["enrollments"].pop(key, None)
+        return True
+
+
+def set_course_published(
+    state: dict[str, Any], course_id: str, published: bool
+) -> dict[str, Any] | None:
+    with state["lock"]:
+        connection = state["connection"]
+        connection.execute("BEGIN")
+        try:
+            cursor = connection.execute(
+                "UPDATE courses SET published = %s WHERE id = %s",
+                (int(bool(published)), course_id),
+            )
+            if cursor.rowcount == 0:
+                connection.execute("ROLLBACK")
+                return None
+            connection.execute("COMMIT")
+        except psycopg.Error:
+            connection.execute("ROLLBACK")
+            raise
+        course = state["courses"].get(course_id)
+        if course is not None:
+            course["published"] = bool(published)
+    return course
+
+
+# --- Lessons --------------------------------------------------------------
+
+
+def _lesson_view(row: tuple[Any, ...]) -> dict[str, Any]:
+    return {
+        "id": row[0],
+        "courseId": row[1],
+        "title": row[2],
+        "body": row[3],
+        "videoUrl": row[4],
+        "position": row[5],
+        "isPreview": bool(row[6]),
+        "createdBy": row[7],
+        "createdAt": row[8],
+    }
+
+
+def create_lesson(
+    state: dict[str, Any],
+    *,
+    course_id: str,
+    title: str,
+    body: str,
+    video_url: str,
+    is_preview: bool,
+    created_by: str,
+    now: float,
+) -> dict[str, Any]:
+    lesson_id = "ls_" + uuid.uuid4().hex
+    with state["lock"]:
+        connection = state["connection"]
+        connection.execute("BEGIN")
+        try:
+            position_row = connection.execute(
+                "SELECT COALESCE(MAX(position), 0) + 1 FROM lessons WHERE course_id = %s",
+                (course_id,),
+            ).fetchone()
+            position = int(str(position_row[0])) if position_row is not None else 1
+            connection.execute(
+                """
+                INSERT INTO lessons
+                    (id, course_id, title, body, video_url, position,
+                     is_preview, created_by, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    lesson_id,
+                    course_id,
+                    title,
+                    body,
+                    video_url,
+                    position,
+                    int(bool(is_preview)),
+                    created_by,
+                    now,
+                ),
+            )
+            connection.execute("COMMIT")
+        except psycopg.Error:
+            connection.execute("ROLLBACK")
+            raise
+    return {
+        "id": lesson_id,
+        "courseId": course_id,
+        "title": title,
+        "body": body,
+        "videoUrl": video_url,
+        "position": int(position),
+        "isPreview": bool(is_preview),
+        "createdBy": created_by,
+        "createdAt": now,
+    }
+
+
+def update_lesson(
+    state: dict[str, Any],
+    lesson_id: str,
+    *,
+    title: str,
+    body: str,
+    video_url: str,
+    is_preview: bool,
+) -> bool:
+    with state["lock"]:
+        cursor = state["connection"].execute(
+            """
+            UPDATE lessons
+               SET title = %s, body = %s, video_url = %s, is_preview = %s
+             WHERE id = %s
+            """,
+            (title, body, video_url, int(bool(is_preview)), lesson_id),
+        )
+        return cursor.rowcount > 0
+
+
+def delete_lesson(state: dict[str, Any], lesson_id: str) -> bool:
+    with state["lock"]:
+        connection = state["connection"]
+        connection.execute("BEGIN")
+        try:
+            connection.execute("DELETE FROM lesson_progress WHERE lesson_id = %s", (lesson_id,))
+            cursor = connection.execute("DELETE FROM lessons WHERE id = %s", (lesson_id,))
+            connection.execute("COMMIT")
+        except psycopg.Error:
+            connection.execute("ROLLBACK")
+            raise
+        return cursor.rowcount > 0
+
+
+def list_lessons(state: dict[str, Any], course_id: str) -> list[dict[str, Any]]:
+    with state["lock"]:
+        rows = (
+            state["connection"]
+            .execute(
+                """
+            SELECT id, course_id, title, body, video_url, position,
+                   is_preview, created_by, created_at
+              FROM lessons WHERE course_id = %s
+             ORDER BY position, created_at
+            """,
+                (course_id,),
+            )
+            .fetchall()
+        )
+    return [_lesson_view(row) for row in rows]
+
+
+def get_lesson(state: dict[str, Any], lesson_id: str) -> dict[str, Any] | None:
+    with state["lock"]:
+        row = (
+            state["connection"]
+            .execute(
+                """
+            SELECT id, course_id, title, body, video_url, position,
+                   is_preview, created_by, created_at
+              FROM lessons WHERE id = %s
+            """,
+                (lesson_id,),
+            )
+            .fetchone()
+        )
+    return _lesson_view(row) if row is not None else None
+
+
+def mark_lesson_complete(
+    state: dict[str, Any], *, user_id: str, lesson_id: str, now: float
+) -> None:
+    with state["lock"]:
+        state["connection"].execute(
+            """
+            INSERT INTO lesson_progress (user_id, lesson_id, completed_at)
+            VALUES (%s, %s, %s)
+            ON CONFLICT DO NOTHING
+            """,
+            (user_id, lesson_id, now),
+        )
+
+
+def completed_lesson_ids(state: dict[str, Any], user_id: str, course_id: str) -> set[str]:
+    with state["lock"]:
+        rows = (
+            state["connection"]
+            .execute(
+                """
+                SELECT lp.lesson_id
+                  FROM lesson_progress lp
+                  JOIN lessons l ON l.id = lp.lesson_id
+                 WHERE lp.user_id = %s AND l.course_id = %s
+                """,
+                (user_id, course_id),
+            )
+            .fetchall()
+        )
+    return {row[0] for row in rows}
+
+
+def delete_user(state: dict[str, Any], user_id: str) -> bool:
+    with state["lock"]:
+        connection = state["connection"]
+        connection.execute("BEGIN")
+        try:
+            connection.execute("DELETE FROM lesson_progress WHERE user_id = %s", (user_id,))
+            connection.execute("DELETE FROM quiz_attempts WHERE student_id = %s", (user_id,))
+            connection.execute("DELETE FROM submissions WHERE student_id = %s", (user_id,))
+            connection.execute("DELETE FROM enrollments WHERE student_id = %s", (user_id,))
+            connection.execute("DELETE FROM password_reset_tokens WHERE user_id = %s", (user_id,))
+            connection.execute("DELETE FROM oauth_accounts WHERE user_id = %s", (user_id,))
+            cursor = connection.execute("DELETE FROM users WHERE id = %s", (user_id,))
+            if cursor.rowcount == 0:
+                connection.execute("ROLLBACK")
+                return False
+            connection.execute("COMMIT")
+        except psycopg.Error:
+            connection.execute("ROLLBACK")
+            raise
+        user = state["users"].pop(user_id, None)
+        if user is not None:
+            state["by_email"].pop(user["email"].lower(), None)
+        for key in [k for k in state["enrollments"] if k[1] == user_id]:
+            state["enrollments"].pop(key, None)
+        state["locked"].pop(user_id, None)
+        state["bios"].pop(user_id, None)
+        state["phones"].pop(user_id, None)
+        state["avatars"].pop(user_id, None)
         return True
 
 
