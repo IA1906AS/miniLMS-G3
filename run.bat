@@ -16,10 +16,6 @@ rem  Frontend cua du an la giao dien server-side (Jinja2 + CSS) do chinh Flask
 rem  phuc vu, nen khong co tien trinh FE rieng: chay Flask la co ca BE va FE.
 rem ==========================================================================
 
-set "APP_PORT=5000"
-set "PG_PORT=2010"
-set "PG_SERVICE=postgresql-x64-18"
-set "DB_NAME=lms"
 set "PY=python"
 
 echo ============================================================
@@ -28,6 +24,12 @@ echo ============================================================
 
 if not exist ".env" call :setup_env
 call :load_env
+
+rem Cho phep .env ghi de (vi du nhanh feature/before dung DB + cong rieng)
+if not defined APP_PORT   set "APP_PORT=5000"
+if not defined PG_PORT    set "PG_PORT=2010"
+if not defined PG_SERVICE set "PG_SERVICE=postgresql-x64-18"
+if not defined DB_NAME    set "DB_NAME=lms"
 
 if /i "%~1"=="db"   goto :db_only
 if /i "%~1"=="app"  goto :app_only
